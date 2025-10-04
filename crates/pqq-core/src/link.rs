@@ -95,8 +95,8 @@ impl LinkHandshakeDriver {
 
         let encoded = encode_handshake_response(&response)?;
         let mut sequencer = FrameSequencer::new(0, 0);
-        let frames = encode_chunked_payload(&mut sequencer, &encoded)
-            .map_err(HandshakeError::Frame)?;
+        let frames =
+            encode_chunked_payload(&mut sequencer, &encoded).map_err(HandshakeError::Frame)?;
         for frame in frames {
             endpoint.send_frame(&frame).await?;
         }

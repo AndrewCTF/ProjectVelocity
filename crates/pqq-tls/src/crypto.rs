@@ -105,13 +105,17 @@ impl SessionCrypto {
         let prefer_aes = prefer_aes_gcm();
 
         let send_aead = if prefer_aes {
-            AeadImpl::Aes(Box::new(Aes256Gcm::new(GenericArray::from_slice(&send_key))))
+            AeadImpl::Aes(Box::new(Aes256Gcm::new(GenericArray::from_slice(
+                &send_key,
+            ))))
         } else {
             AeadImpl::ChaCha(ChaCha20Poly1305::new(ChaChaKey::from_slice(&send_key)))
         };
 
         let recv_aead = if prefer_aes {
-            AeadImpl::Aes(Box::new(Aes256Gcm::new(GenericArray::from_slice(&recv_key))))
+            AeadImpl::Aes(Box::new(Aes256Gcm::new(GenericArray::from_slice(
+                &recv_key,
+            ))))
         } else {
             AeadImpl::ChaCha(ChaCha20Poly1305::new(ChaChaKey::from_slice(&recv_key)))
         };

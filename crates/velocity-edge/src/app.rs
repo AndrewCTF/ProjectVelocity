@@ -102,7 +102,6 @@ impl EdgeAppBuilder {
         }
     }
 
-
     pub fn static_dir<P: Into<PathBuf>>(&mut self, path: P) -> &mut Self {
         self.static_dir = Some(path.into());
         self

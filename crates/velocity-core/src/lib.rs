@@ -415,8 +415,8 @@ pub fn negotiate_alpn<'a>(
     client_offered: &'a [&'a str],
     server_supported: &'a [&'a str],
 ) -> AlpnDecision<'a> {
-    let client_has_velocity = client_offered.iter().any(|alpn| *alpn == VELOCITY_ALPN);
-    let server_has_velocity = server_supported.iter().any(|alpn| *alpn == VELOCITY_ALPN);
+    let client_has_velocity = client_offered.contains(&VELOCITY_ALPN);
+    let server_has_velocity = server_supported.contains(&VELOCITY_ALPN);
 
     if client_has_velocity && server_has_velocity {
         return AlpnDecision::Velocity;

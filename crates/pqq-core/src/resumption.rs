@@ -27,7 +27,7 @@ pub struct ReplayToken<'a> {
     pub expires_at: SystemTime,
 }
 
-impl<'a> ReplayToken<'a> {
+impl ReplayToken<'_> {
     pub fn digest(&self) -> [u8; 32] {
         let mut hasher = Sha3_256::new();
         hasher.update(self.ticket_id);

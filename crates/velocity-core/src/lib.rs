@@ -640,10 +640,12 @@ mod tests {
     use tokio::time::{timeout, Duration};
 
     fn test_security_context() -> Arc<SecurityContext> {
-        let mut cfg = SecurityConfig::default();
-        cfg.header_key = [0x55; 32];
-        cfg.max_initials_per_second = 1_000;
-        cfg.packet_window = 1024;
+        let cfg = SecurityConfig {
+            header_key: [0x55; 32],
+            max_initials_per_second: 1_000,
+            packet_window: 1024,
+            ..SecurityConfig::default()
+        };
         Arc::new(SecurityContext::new(cfg))
     }
 

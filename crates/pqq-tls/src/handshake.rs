@@ -1018,7 +1018,7 @@ mod tests {
     }
 
     fn static_keypair() -> StaticKemKeyPair {
-        let kem = TestKem::default();
+        let kem = TestKem;
         let (public, secret) = kem.generate_keypair().expect("keypair");
         StaticKemKeyPair::new(public, secret)
     }
@@ -1065,7 +1065,7 @@ mod tests {
 
     #[test]
     fn round_trip_handshake() {
-        let kem = TestKem::default();
+        let kem = TestKem;
         let static_keys = static_keypair();
         let manager = ticket_manager();
         let suite = HybridSuite::BALANCED;
@@ -1116,7 +1116,7 @@ mod tests {
 
     #[test]
     fn replay_guard_rejects_duplicate_0rtt() {
-        let kem = TestKem::default();
+        let kem = TestKem;
         let static_keys = static_keypair();
         let manager = ticket_manager();
         let guard: Arc<dyn ReplayGuard> = Arc::new(InMemoryReplayGuard::default());
@@ -1163,12 +1163,14 @@ mod tests {
         let resumption_secret = completion1.key_schedule.resumption_secret();
 
         // Second handshake attempts 0-RTT.
-        let mut options2 = ClientHelloOptions::default();
-        options2.resumption = Some(ResumptionParams {
-            ticket: ticket.clone(),
-            secret: resumption_secret,
-        });
-        options2.early_data = Some(b"GET /0rtt HTTP/1.1\r\n\r\n".to_vec());
+        let options2 = ClientHelloOptions {
+            resumption: Some(ResumptionParams {
+                ticket: ticket.clone(),
+                secret: resumption_secret,
+            }),
+            early_data: Some(b"GET /0rtt HTTP/1.1\r\n\r\n".to_vec()),
+            ..ClientHelloOptions::default()
+        };
         let client2 =
             ClientHandshake::new(kem.clone(), suite, static_keys.public.clone(), options2)
                 .expect("client init 2");

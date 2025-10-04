@@ -84,10 +84,16 @@ pub struct EdgeAppBuilder {
     static_dir: Option<PathBuf>,
 }
 
+impl Default for EdgeAppBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EdgeAppBuilder {
     pub fn new() -> Self {
-        let mut middlewares: Vec<Arc<dyn EdgeMiddleware>> = Vec::new();
-        middlewares.push(Arc::new(SecurityHeadersMiddleware::new()));
+        let middlewares: Vec<Arc<dyn EdgeMiddleware>> =
+            vec![Arc::new(SecurityHeadersMiddleware::new())];
         Self {
             routes: Vec::new(),
             middlewares,
@@ -95,6 +101,7 @@ impl EdgeAppBuilder {
             static_dir: None,
         }
     }
+
 
     pub fn static_dir<P: Into<PathBuf>>(&mut self, path: P) -> &mut Self {
         self.static_dir = Some(path.into());

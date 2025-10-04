@@ -34,7 +34,7 @@ impl RateLimitMiddleware {
             return Ok(());
         }
         let now = Instant::now();
-        let mut entry = self.buckets.entry(address).or_insert_with(VecDeque::new);
+    let mut entry = self.buckets.entry(address).or_default();
         while let Some(front) = entry.front() {
             if now.duration_since(*front) > self.window {
                 entry.pop_front();

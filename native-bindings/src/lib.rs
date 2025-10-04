@@ -327,7 +327,7 @@ impl Default for EasyServerStartConfig {
     }
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Default, Deserialize, Debug)]
 #[serde(default)]
 struct EasyClientFallbackConfig {
     enabled: Option<bool>,
@@ -338,20 +338,7 @@ struct EasyClientFallbackConfig {
     initial_backoff_ms: Option<u64>,
 }
 
-impl Default for EasyClientFallbackConfig {
-    fn default() -> Self {
-        Self {
-            enabled: None,
-            force_http1: None,
-            retries: None,
-            base_url: None,
-            timeout_ms: None,
-            initial_backoff_ms: None,
-        }
-    }
-}
-
-#[derive(Deserialize, Debug)]
+#[derive(Default, Deserialize, Debug)]
 #[serde(default)]
 struct EasyClientRequestConfig {
     server_addr: String,
@@ -364,23 +351,6 @@ struct EasyClientRequestConfig {
     path: Option<String>,
     method: Option<String>,
     fallback: EasyClientFallbackConfig,
-}
-
-impl Default for EasyClientRequestConfig {
-    fn default() -> Self {
-        Self {
-            server_addr: String::new(),
-            hostname: None,
-            profile: None,
-            server_key_base64: None,
-            cached_key_host: None,
-            cache_dir: None,
-            cache_key: false,
-            path: None,
-            method: None,
-            fallback: EasyClientFallbackConfig::default(),
-        }
-    }
 }
 
 /// Start a Velocity server using the easy API (static text or JSON handler).
@@ -667,17 +637,19 @@ pub extern "C" fn pqq_init() {
     });
 }
 
+/// # Safety
+///
+/// `config_json` must point to a valid, null-terminated UTF-8 string for the
+/// duration of this call.
 #[no_mangle]
-pub extern "C" fn pqq_start_server(config_json: *const c_char) -> i32 {
+pub unsafe extern "C" fn pqq_start_server(config_json: *const c_char) -> i32 {
     pqq_init();
     if config_json.is_null() {
         return -1;
     }
-    let cfg_str = unsafe {
-        match CStr::from_ptr(config_json).to_str() {
-            Ok(s) => s,
-            Err(_) => return -2,
-        }
+    let cfg_str = match CStr::from_ptr(config_json).to_str() {
+        Ok(s) => s,
+        Err(_) => return -2,
     };
     let config: StartServerConfig = match serde_json::from_str(cfg_str) {
         Ok(cfg) => cfg,
@@ -821,7 +793,7 @@ pub extern "C" fn pqq_stop_server(port: u16) -> i32 {
 
     task.abort();
     let runtime = &state.runtime;
-    let _ = runtime.block_on(async move {
+    runtime.block_on(async move {
         let _ = task.await;
     });
     0
@@ -994,6 +966,10 @@ fn assign_response(out: *mut *const c_char, payload: &str) {
     }
 }
 
+/// # Safety
+///
+/// `ptr` must be either null or a pointer returned by Velocity FFI functions
+/// that allocate strings, and it must not be used again after this call.
 #[no_mangle]
 pub unsafe extern "C" fn pqq_string_free(ptr: *const c_char) {
     if ptr.is_null() {

@@ -20,7 +20,6 @@ use futures_util::{
 };
 use html_escape::{encode_double_quoted_attribute, encode_text};
 use http::StatusCode;
-use httparse;
 use mime_guess::Mime;
 use percent_encoding::percent_decode_str;
 use pqq_server::{
@@ -60,6 +59,7 @@ struct Cli {
     command: Option<Command>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Serve a directory over Velocity with a static-file handler.

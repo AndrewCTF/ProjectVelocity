@@ -32,7 +32,7 @@ pub struct FrameSlice<'a> {
     pub payload: &'a [u8],
 }
 
-impl<'a> FrameSlice<'a> {
+impl FrameSlice<'_> {
     pub fn len(&self) -> usize {
         self.payload.len()
     }

@@ -38,7 +38,7 @@ impl LavaLampMixer {
             let jitter = Instant::now().duration_since(self.last_tick).as_nanos();
 
             let mut hasher = Sha3_512::new();
-            hasher.update(&seed);
+            hasher.update(seed);
             hasher.update(nanos.to_le_bytes());
             hasher.update(jitter.to_le_bytes());
             let digest = hasher.finalize();

@@ -206,7 +206,7 @@ impl EasyClientBuilder {
         let server_kem_key = if let Some(key) = self.server_key.take() {
             key
         } else if let Some(host) = self.key_from_cache.take() {
-            let cache_dir = self.cache_dir.clone().or_else(|| cache_dir_override());
+            let cache_dir = self.cache_dir.clone().or_else(cache_dir_override);
             load_cached_key(&host, cache_dir.as_deref()).map_err(|_| EasyError::MissingServerKey)?
         } else if self.autodiscover {
             autodiscover_server_key(server_addr)?
@@ -255,7 +255,7 @@ impl EasyClient {
             let dir = config
                 .cache_dir
                 .clone()
-                .or_else(|| cache_dir_override())
+                .or_else(cache_dir_override)
                 .unwrap_or_else(crate::util::default_cache_dir);
             let _ = store_cached_key(
                 &config.hostname,
@@ -325,7 +325,7 @@ impl EasyClient {
             .fallback
             .base_url_override
             .clone()
-            .or_else(|| directive.as_ref().map(|d| fallback_base_url(d)))
+            .or_else(|| directive.as_ref().map(fallback_base_url))
             .unwrap_or_else(|| self.base_url.clone());
 
         let target_url = compose_url(&base_url, path);

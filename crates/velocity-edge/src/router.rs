@@ -9,6 +9,12 @@ pub struct EdgeRouter {
     routes: Vec<RouteEntry>,
 }
 
+impl Default for EdgeRouter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone)]
 struct RouteEntry {
     methods: Vec<Method>,

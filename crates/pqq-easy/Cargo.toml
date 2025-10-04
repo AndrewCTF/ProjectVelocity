@@ -1,0 +1,25 @@
+[package]
+name = "pqq-easy"
+version = "0.2.0"
+edition = "2021"
+description = "High-level Velocity SDK with ultra-simple client and server APIs"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+dirs = "5.0"
+lazy_static = "1.4"
+parking_lot = "0.12"
+pqq-core = { path = "../pqq-core" }
+pqq-client = { path = "../pqq-client" }
+pqq-server = { path = "../pqq-server" }
+pqq-tls = { path = "../pqq-tls" }
+reqwest = { version = "0.12", features = ["blocking", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+tracing = "0.1"
+
+[dev-dependencies]

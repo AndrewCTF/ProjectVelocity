@@ -1,0 +1,16 @@
+[package]
+name = "static-file-server"
+version = "0.2.0"
+edition = "2021"
+authors = ["VELO Project Developers"]
+description = "Serve static assets over the PQ-QUIC transport demo server"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+pqq-server = { path = "../../crates/pqq-server" }
+pqq-client = { path = "../../crates/pqq-client" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tokio = { version = "1.38", features = ["macros", "rt-multi-thread", "net", "signal", "fs"] }
+serde_json = "1.0"

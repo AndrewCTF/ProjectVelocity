@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>PQ-QUIC Browser Gateway Demo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body {
+        font-family: "Segoe UI", system-ui, sans-serif;
+        margin: 0;
+        padding: 3rem 1.5rem;
+        background: radial-gradient(circle at top, #0f172a, #020617);
+        color: #f8fafc;
+      }
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+        background: rgba(15, 23, 42, 0.82);
+        border-radius: 16px;
+        padding: 2.5rem;
+        box-shadow: 0 24px 48px rgba(2, 6, 23, 0.6);
+      }
+      h1 {
+        margin-top: 0;
+        font-size: 2.5rem;
+        letter-spacing: 0.04em;
+      }
+      p {
+        line-height: 1.7;
+        font-size: 1.05rem;
+      }
+      code {
+        background: rgba(148, 163, 184, 0.2);
+        padding: 0.25rem 0.45rem;
+        border-radius: 6px;
+      }
+      footer {
+        margin-top: 2.5rem;
+        font-size: 0.9rem;
+        color: #cbd5f5;
+        opacity: 0.75;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>PQ-QUIC Browser Gateway</h1>
+      <p>
+        This page is being delivered to your browser through the VELO reference
+        implementation. The browser speaks ordinary HTTP to a small gateway,
+        which in turn performs a post-quantum hybrid handshake with the
+        PQ-QUIC server.
+      </p>
+      <p>
+        Application data is protected with ChaCha20-Poly1305 keys derived from
+        X25519 + Kyber768, and the gateway documents the negotiated ALPN along
+        the way. View your terminal logs to inspect the handshake transcript and
+        verify the fallback policy.
+      </p>
+      <p>
+        Try navigating to <code>/status</code> to query the JSON API demo, or
+        refresh this page to exercise the 0-RTT ticket cache.
+      </p>
+      <footer>
+        Built with ❤️ by the VELO PQ-QUIC team — secure transport for the
+        quantum era.
+      </footer>
+    </main>
+  </body>
+</html>

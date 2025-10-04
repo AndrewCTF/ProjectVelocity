@@ -1,0 +1,13 @@
+[package]
+name = "browser-gateway"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+tokio = { version = "1.38", features = ["macros", "rt-multi-thread", "net", "signal", "fs"] }
+hyper = { version = "0.14", features = ["full"] }
+pqq-server = { path = "../../crates/pqq-server" }
+pqq-client = { path = "../../crates/pqq-client" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }

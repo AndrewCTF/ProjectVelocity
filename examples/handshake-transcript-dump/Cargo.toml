@@ -1,0 +1,18 @@
+[package]
+name = "handshake-transcript-dump"
+version = "0.2.0"
+edition = "2021"
+authors = ["VELO Project Developers"]
+description = "Utility for capturing hybrid PQ handshake transcripts"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+pqq-client = { path = "../../crates/pqq-client" }
+pqq-server = { path = "../../crates/pqq-server" }
+pqq-tls = { path = "../../crates/pqq-tls" }
+pqq-core = { path = "../../crates/pqq-core" }
+tokio = { version = "1.38", features = ["macros", "rt-multi-thread", "net", "sync"] }
+sha2 = "0.10"

@@ -1,0 +1,24 @@
+[package]
+name = "pqq-client"
+version = "0.2.0"
+edition = "2021"
+description = "Client SDK for PQ-QUIC"
+license = "MIT"
+
+[features]
+default = ["mlkem"]
+mlkem = ["pqq-tls/mlkem"]
+
+[dependencies]
+pqq-core = { path = "../pqq-core" }
+pqq-tls = { path = "../pqq-tls" }
+tokio = { version = "1.38", features = ["net", "rt", "macros", "sync"] }
+tracing = "0.1"
+thiserror = "1.0"
+url = "2.5"
+base64 = "0.22"
+serde_json = "1.0"
+
+[dev-dependencies]
+base64 = "0.22"
+serde_json = "1.0"

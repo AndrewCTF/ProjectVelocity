@@ -1,0 +1,18 @@
+[package]
+name = "json-api-demo"
+version = "0.2.0"
+edition = "2021"
+authors = ["VELO Project Developers"]
+description = "JSON API demonstration over PQ-QUIC"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+pqq-core = { path = "../../crates/pqq-core" }
+pqq-server = { path = "../../crates/pqq-server" }
+pqq-client = { path = "../../crates/pqq-client" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tokio = { version = "1.38", features = ["macros", "rt-multi-thread", "net", "signal"] }

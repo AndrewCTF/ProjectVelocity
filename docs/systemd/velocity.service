@@ -1,0 +1,18 @@
+[Unit]
+Description=Velocity static site server (PQ-QUIC)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=velocity
+Group=velocity
+WorkingDirectory=/opt/velocity
+Environment=RUST_LOG=info
+ExecStart=/opt/velocity/target/release/velocity serve --root /opt/velocity/deploy --listen 0.0.0.0:4433 --alpn velocity/1 --fallback-alpn h3 --self-signed
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

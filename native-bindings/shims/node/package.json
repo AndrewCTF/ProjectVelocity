@@ -1,0 +1,13 @@
+{
+  "name": "pqq-easy-node",
+  "version": "0.2.0",
+  "description": "Node.js bindings for the Velocity easy C API",
+  "main": "index.js",
+  "license": "MIT",
+  "private": true,
+  "dependencies": {
+    "ffi-napi": "^4.0.3",
+    "ref-napi": "^3.0.3",
+    "ref-struct-napi": "^1.1.1"
+  }
+}

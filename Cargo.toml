@@ -1,0 +1,19 @@
+[workspace]
+members = [
+    "crates/pqq-core",
+    "crates/pqq-tls",
+    "crates/pqq-server",
+    "crates/pqq-client",
+    "crates/pqq-easy",
+    "crates/velocity-core",
+    "crates/velocity-cli",
+    "crates/velocity-edge",
+    "native-bindings",
+    "examples/handshake-demo",
+    "examples/static-file-server",
+    "examples/json-api",
+    "examples/browser-gateway",
+    "examples/handshake-transcript-dump",
+    "benchmarks/handshake-bench"
+]
+resolver = "2"

@@ -1,0 +1,29 @@
+[package]
+name = "pqq-server"
+version = "0.2.0"
+edition = "2021"
+description = "Async server facade for PQ-QUIC"
+license = "MIT"
+
+[features]
+default = ["mlkem"]
+mlkem = ["pqq-tls/mlkem"]
+
+[dependencies]
+pqq-core = { path = "../pqq-core" }
+pqq-tls = { path = "../pqq-tls" }
+tokio = { version = "1.38", features = ["net", "rt-multi-thread", "macros", "sync"] }
+tracing = "0.1"
+thiserror = "1.0"
+async-trait = "0.1"
+serde_json = "1.0"
+base64 = "0.22"
+rand = "0.8"
+sha2 = "0.10"
+dashmap = "5.5"
+bytes = "1.7"
+futures-util = "0.3"
+
+[dev-dependencies]
+pqq-client = { path = "../pqq-client" }
+tokio = { version = "1.38", features = ["macros", "rt", "net"] }

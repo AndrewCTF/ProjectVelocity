@@ -1,14 +1,14 @@
 # Velocity Reference Stack
+	```
+	cd docker
+	docker compose up --build
+	```
 
-> **Project Velocity** — A production-quality, open-source reference implementation of a post-quantum resilient QUIC transport published at [projectvelocity.org](https://projectvelocity.org).
-
-## Overview
-
-This repository hosts a hybrid classical + post-quantum secure transport protocol nicknamed **Velocity (ALPN `velocity/1`)**. The project targets compatibility with existing HTTPS deployments while introducing ML-KEM (Kyber) based key exchange, ML-DSA backed authentication, and modern privacy protections such as Encrypted Client Hello.
-
-## Repository layout
-
-- `crates/pqq-core` – Core transport, packet framing, congestion control hooks, ALPN negotiation, handshake state machine stubs.
+	This spins up the Velocity UDP listener on `4433/udp` alongside the TCP preview on
+	`8443/tcp` using a self-signed localhost certificate. Exercise the handshake with
+	`cargo run -p pqq-client --example velocity-fetch -- 127.0.0.1:4433 https://localhost:8443/ping.txt --alpn velocity/1`.
+	The preview listener still speaks the hybrid PQ handshake (not classical TLS yet), so use
+	`velocity-fetch` for now. See [`docs/docker-local.md`](docs/docker-local.md) for customization tips.
 - `crates/pqq-tls` – Hybrid TLS-like handshake engine with ML-KEM KEM, ML-DSA/Ed25519 hybrid signatures, AEAD abstractions, and ticket logic. Directional AEAD keys (ChaCha20-Poly1305) are derived for every successful handshake via the new `SessionCrypto` helper.
 	- `src/handshake.rs` ships with the ML-KEM provider by default and uses a deterministic test-only KEM inside unit tests to keep reproducibility without shipping insecure fallbacks.
 - `crates/pqq-server` – High-level async server facade exposing HTTP semantics, enforcing ChaCha20-Poly1305 protection on application datagrams once the hybrid handshake completes.
@@ -40,6 +40,21 @@ cargo test --workspace
 > **Note:** PQ libraries (ML-KEM/Kyber and ML-DSA) are provided via Rust crates and/or optimized C bindings. Ensure your toolchain is pinned to nightly or stable ≥1.80 once specified in `rust-toolchain.toml`.
 
 ## Hands-on demos
+
+- **Velocity static site CLI:**
+
+- **Docker sandbox (Velocity + HTTPS fallback):**
+
+	```pwsh
+	cd docker
+	docker compose up --build
+	```
+
+	This spins up the Velocity UDP listener on `4433/udp` alongside the HTTPS preview on
+	`8443/tcp` using a self-signed localhost certificate. Exercise the handshake with
+	`cargo run -p pqq-client --example velocity-fetch -- 127.0.0.1:4433 https://localhost:8443/ --alpn velocity/1`
+	and browse to <https://localhost:8443/> (skip certificate verification) to confirm the
+	fallback path. See [`docs/docker-local.md`](docs/docker-local.md) for customization tips.
 
 - **Velocity static site CLI:**
 

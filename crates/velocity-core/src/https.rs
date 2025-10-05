@@ -447,13 +447,7 @@ async fn convert_hyper_request(
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_else(|| parts.uri.path().to_string());
-    EdgeRequest::from_http_parts(
-        parts.method,
-        target,
-        parts.headers,
-        Bytes::from(bytes),
-        peer,
-    )
+    EdgeRequest::from_http_parts(parts.method, target, parts.headers, bytes, peer)
 }
 
 fn convert_edge_to_hyper(response: EdgeResponse) -> Response<Full<Bytes>> {

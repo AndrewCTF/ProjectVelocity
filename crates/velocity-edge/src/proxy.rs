@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use bytes::Bytes;
 use http::header::{HeaderName, CONTENT_LENGTH, HOST};
 use http::{Method, StatusCode};
 use reqwest::{Client, Method as ReqwestMethod, Url};
@@ -121,14 +120,14 @@ impl ServeHandler for ProxyHandler {
             if is_hop_by_hop(name) {
                 continue;
             }
-            if name == &HOST {
+            if name == HOST {
                 saw_host = true;
                 if self.preserve_host {
                     builder = builder.header(name, value);
                 }
                 continue;
             }
-            if name == &CONTENT_LENGTH {
+            if name == CONTENT_LENGTH {
                 continue;
             }
             builder = builder.header(name, value);
@@ -171,19 +170,17 @@ impl ServeHandler for ProxyHandler {
             return Ok(response);
         }
 
-        if self.tuning.streaming {
-            let bytes = upstream_response
-                .bytes()
-                .await
-                .map_err(EdgeError::Upstream)?;
-            Ok(response.with_body(Bytes::from(bytes)))
-        } else {
-            let bytes = upstream_response
-                .bytes()
-                .await
-                .map_err(EdgeError::Upstream)?;
-            Ok(response.with_body(Bytes::from(bytes)))
+        let streaming = self.tuning.streaming;
+        let body = upstream_response
+            .bytes()
+            .await
+            .map_err(EdgeError::Upstream)?;
+
+        if streaming {
+            // TODO: Support true streaming responses once EdgeResponse exposes streaming APIs.
         }
+
+        Ok(response.with_body(body))
     }
 }
 

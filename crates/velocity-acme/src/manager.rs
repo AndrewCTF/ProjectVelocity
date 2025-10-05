@@ -315,10 +315,7 @@ async fn satisfy_authorization(
     )))
 }
 
-fn find_challenge<'a>(
-    authorization: &'a Authorization,
-    ty: ChallengeType,
-) -> Option<&'a Challenge> {
+fn find_challenge(authorization: &Authorization, ty: ChallengeType) -> Option<&Challenge> {
     authorization
         .challenges
         .iter()

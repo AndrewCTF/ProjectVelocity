@@ -146,7 +146,7 @@ impl HostEntry {
         for route in &self.routes {
             if route.matches(method, path) {
                 let len = route.prefix_len;
-                if best.as_ref().map_or(true, |(_, best_len)| len > *best_len) {
+                if best.as_ref().is_none_or(|(_, best_len)| len > *best_len) {
                     best = Some((route, len));
                 }
             }

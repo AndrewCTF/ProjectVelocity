@@ -139,7 +139,9 @@ struct TelemetryInner {
 
 impl TelemetryInner {
     async fn shutdown(&self) -> Result<()> {
-        if let Some(mut server) = self.exporter.lock().unwrap().take() {
+        let server = self.exporter.lock().unwrap().take();
+
+        if let Some(mut server) = server {
             server.shutdown().await?;
         }
         Ok(())
@@ -246,8 +248,10 @@ mod tests {
 
     #[tokio::test]
     async fn telemetry_counts_and_shutdown() {
-        let mut settings = TelemetrySettings::default();
-        settings.listen = Some("127.0.0.1:0".parse().expect("metrics addr"));
+        let settings = TelemetrySettings {
+            listen: Some("127.0.0.1:0".parse().expect("metrics addr")),
+            ..Default::default()
+        };
 
         let telemetry = TelemetryHandle::initialize(settings)
             .await
@@ -262,8 +266,10 @@ mod tests {
 
     #[tokio::test]
     async fn telemetry_metrics_endpoint_serves_payload() {
-        let mut settings = TelemetrySettings::default();
-        settings.listen = Some("127.0.0.1:0".parse().expect("metrics addr"));
+        let settings = TelemetrySettings {
+            listen: Some("127.0.0.1:0".parse().expect("metrics addr")),
+            ..Default::default()
+        };
 
         let telemetry = TelemetryHandle::initialize(settings)
             .await

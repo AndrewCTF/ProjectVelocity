@@ -4,9 +4,10 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 /// ACME challenge types supported by the manager.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum AcmeChallengeType {
+    #[default]
     Http01,
     TlsAlpn01,
 }
@@ -14,12 +15,6 @@ pub enum AcmeChallengeType {
 impl AcmeChallengeType {
     pub fn http() -> &'static [AcmeChallengeType] {
         &[AcmeChallengeType::Http01]
-    }
-}
-
-impl Default for AcmeChallengeType {
-    fn default() -> Self {
-        AcmeChallengeType::Http01
     }
 }
 

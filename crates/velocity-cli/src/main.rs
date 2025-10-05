@@ -931,8 +931,10 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
 
     let telemetry = if let Some(addr) = metrics_listen {
         info!(target: "velocity::metrics", address = %addr, "Prometheus metrics endpoint enabled");
-        let mut settings = TelemetrySettings::default();
-        settings.listen = Some(addr);
+        let settings = TelemetrySettings {
+            listen: Some(addr),
+            ..Default::default()
+        };
         let telemetry = TelemetryHandle::initialize(settings).await?;
         if let Some(bound) = telemetry.metrics_addr() {
             info!(target: "velocity::metrics", address = %bound, "Prometheus metrics exporter running");

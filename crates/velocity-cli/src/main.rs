@@ -1,4 +1,5 @@
 mod edge;
+mod telemetry;
 
 use std::borrow::Cow;
 use std::error::Error as StdError;
@@ -21,6 +22,10 @@ use futures_util::{
 use html_escape::{encode_double_quoted_attribute, encode_text};
 use http::StatusCode;
 use mime_guess::Mime;
+use notify::{
+    event::ModifyKind, Config as NotifyConfig, EventKind, RecommendedWatcher, RecursiveMode,
+    Watcher,
+};
 use percent_encoding::percent_decode_str;
 use pqq_server::{
     Request, Response, ResponseStreamError, SecurityProfile, Server, ServerConfig, ServerError,
@@ -36,11 +41,18 @@ use reqwest::{
 use serde::Serialize;
 use thiserror::Error;
 use tokio::signal;
+use tokio::sync::mpsc;
 use tokio::task;
-use tracing::{error, info, warn};
+use tokio::task::JoinHandle;
+use tracing::{error, info, info_span, warn};
 use tracing_subscriber::EnvFilter;
-use velocity_edge::{EdgeError, EdgeResponse};
+use velocity_core::https::{HttpsConfig, HttpsServer};
+use velocity_edge::{
+    EdgeError, EdgeRequest, EdgeResponse, ServeConfig, ServeRouter, ServeRouterController,
+};
 use walkdir::WalkDir;
+
+use telemetry::{TelemetryHandle, TelemetrySettings};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -54,6 +66,10 @@ struct Cli {
     /// Increase output verbosity (-v, -vv, -vvv).
     #[arg(short, long, action = ArgAction::Count)]
     verbose: u8,
+
+    /// Output log format (text or json).
+    #[arg(long, value_enum, default_value_t = LogFormat::Text)]
+    log_format: LogFormat,
 
     #[command(subcommand)]
     command: Option<Command>,
@@ -128,6 +144,14 @@ struct ServeArgs {
     #[arg(long, default_value = "localhost")]
     domain: String,
 
+    /// Contact email used for ACME account registration (Stage 3 preparation).
+    #[arg(long)]
+    email: Option<String>,
+
+    /// Consent to the ACME Terms of Service required for automation.
+    #[arg(long, action = ArgAction::SetTrue)]
+    accept_tos: bool,
+
     /// Advertise the server's ML-KEM public key in handshake payloads.
     #[arg(long)]
     publish_kem: bool,
@@ -163,6 +187,22 @@ struct ServeArgs {
     /// Load an edge runtime configuration (YAML) for dynamic routes and APIs.
     #[arg(long)]
     edge_config: Option<PathBuf>,
+
+    /// Path to a unified serve configuration (YAML or JSON).
+    #[arg(long)]
+    config: Option<PathBuf>,
+
+    /// Enable the built-in HTTPS preview listener.
+    #[arg(long)]
+    serve_https: bool,
+
+    /// Address for the HTTPS preview listener.
+    #[arg(long, default_value = "0.0.0.0:8443")]
+    https_listen: SocketAddr,
+
+    /// Optional address to expose Prometheus metrics (e.g. 127.0.0.1:9300).
+    #[arg(long)]
+    metrics_listen: Option<SocketAddr>,
 }
 
 impl Default for ServeArgs {
@@ -182,6 +222,8 @@ impl Default for ServeArgs {
             key: None,
             self_signed: false,
             domain: "localhost".to_string(),
+            email: None,
+            accept_tos: false,
             publish_kem: false,
             proxy: None,
             proxy_preserve_host: false,
@@ -191,6 +233,10 @@ impl Default for ServeArgs {
             proxy_tcp_keepalive: Duration::from_secs(60),
             proxy_stream: false,
             edge_config: None,
+            config: None,
+            serve_https: false,
+            https_listen: "0.0.0.0:8443".parse().expect("default https addr"),
+            metrics_listen: None,
         }
     }
 }
@@ -669,7 +715,7 @@ fn proxy_error_response(status: StatusCode, message: &str) -> Response {
         status.as_str(),
         status.canonical_reason().unwrap_or("Error")
     );
-    http_text_response(&status_line, message.to_string())
+    http_text_response(&status_line, message.to_string()).into_response()
 }
 
 #[derive(Args, Debug, Clone)]
@@ -705,6 +751,12 @@ enum Profile {
     Fortress,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum LogFormat {
+    Text,
+    Json,
+}
+
 impl From<Profile> for SecurityProfile {
     fn from(value: Profile) -> Self {
         match value {
@@ -718,7 +770,7 @@ impl From<Profile> for SecurityProfile {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    init_tracing(cli.verbose);
+    init_tracing(cli.verbose, cli.log_format);
 
     let command = cli.command.unwrap_or(Command::Serve(ServeArgs::default()));
 
@@ -731,7 +783,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn init_tracing(verbosity: u8) {
+fn init_tracing(verbosity: u8, format: LogFormat) {
     let filter = match verbosity {
         0 => "info",
         1 => "debug",
@@ -742,10 +794,14 @@ fn init_tracing(verbosity: u8) {
         .with_default_directive(filter.parse().unwrap_or_else(|_| "info".parse().unwrap()))
         .from_env_lossy();
 
-    let _ = tracing_subscriber::fmt()
+    let subscriber = tracing_subscriber::fmt()
         .with_env_filter(env_filter)
-        .with_target(false)
-        .try_init();
+        .with_target(false);
+
+    let _ = match format {
+        LogFormat::Text => subscriber.try_init(),
+        LogFormat::Json => subscriber.json().try_init(),
+    };
 }
 
 async fn run_serve(args: ServeArgs) -> Result<()> {
@@ -764,6 +820,8 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
         key,
         self_signed,
         domain,
+        email,
+        accept_tos,
         publish_kem,
         proxy,
         proxy_preserve_host,
@@ -773,10 +831,22 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
         proxy_tcp_keepalive,
         proxy_stream,
         edge_config,
+        config,
+        serve_https,
+        https_listen,
+        metrics_listen,
     } = args;
 
     if cert.is_some() ^ key.is_some() {
         bail!("both --cert and --key must be provided together");
+    }
+
+    if edge_config.is_some() && config.is_some() {
+        bail!("--edge-config and --config cannot be used together");
+    }
+
+    if config.is_some() && proxy.is_some() {
+        bail!("--proxy cannot be combined with --config");
     }
 
     if !root.exists() {
@@ -800,7 +870,7 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
         None
     };
 
-    let mut config = match (&cert, &key, &materials) {
+    let mut server_config = match (&cert, &key, &materials) {
         (Some(cert), Some(key), _) => ServerConfig::from_cert_chain(cert.clone(), key.clone()),
         (None, None, Some(materials)) => {
             ServerConfig::from_cert_chain(materials.cert_path.clone(), materials.key_path.clone())
@@ -808,21 +878,69 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
         _ => ServerConfig::default(),
     };
 
-    config = config
-        .with_security_profile(profile.into())
+    let security_profile: SecurityProfile = profile.into();
+
+    server_config = server_config
+        .with_security_profile(security_profile)
         .with_alpn(alpn.clone());
 
     if let Some(limit) = max_sessions {
-        config = config.with_max_concurrent_sessions(limit);
+        server_config = server_config.with_max_concurrent_sessions(limit);
     }
 
     if let Some(host) = &fallback_host {
-        config = config.with_fallback(fallback_alpn.clone(), host.clone(), fallback_port);
+        server_config =
+            server_config.with_fallback(fallback_alpn.clone(), host.clone(), fallback_port);
     }
 
     if publish_kem {
-        config = config.publish_kem_public(true);
+        server_config = server_config.publish_kem_public(true);
     }
+
+    if let Some(email) = &email {
+        if !accept_tos {
+            warn!(
+                target: "velocity::acme",
+                "--email provided without --accept-tos; ACME automation will remain disabled"
+            );
+        } else {
+            info!(
+                target: "velocity::acme",
+                email = %email,
+                "ACME contact recorded; automation will activate once Stage 3 ships"
+            );
+        }
+    }
+
+    if accept_tos && email.is_none() {
+        warn!(
+            target: "velocity::acme",
+            "--accept-tos provided but --email missing; add contact information for ACME enrollment"
+        );
+    }
+
+    let https_plan = if serve_https {
+        Some(HttpsConfig {
+            bind_addr: https_listen,
+            security_profile,
+            ticket_lifetime: server_config.session_ticket_lifetime,
+        })
+    } else {
+        None
+    };
+
+    let telemetry = if let Some(addr) = metrics_listen {
+        info!(target: "velocity::metrics", address = %addr, "Prometheus metrics endpoint enabled");
+        let mut settings = TelemetrySettings::default();
+        settings.listen = Some(addr);
+        let telemetry = TelemetryHandle::initialize(settings).await?;
+        if let Some(bound) = telemetry.metrics_addr() {
+            info!(target: "velocity::metrics", address = %bound, "Prometheus metrics exporter running");
+        }
+        telemetry
+    } else {
+        TelemetryHandle::disabled()
+    };
 
     let proxy = if let Some(origin) = &proxy {
         let tuning = ProxyTuning {
@@ -841,6 +959,37 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
         None
     };
 
+    let mut router_watch_task: Option<JoinHandle<()>> = None;
+    let router_handle = if let Some(config_path) = &config {
+        let resolved = resolve_config_path(&root, config_path);
+        let serve_config = load_serve_config_file(&resolved).await?;
+        let host_count = serve_config.hosts.len();
+        let router = build_serve_router(serve_config, &root)?;
+        info!(
+            target: "velocity::config",
+            file = %resolved.display(),
+            hosts = host_count,
+            "serve configuration loaded"
+        );
+        let (controller, handle) = ServeRouterController::new(router);
+        match spawn_router_watcher(resolved.clone(), root.clone(), controller) {
+            Ok(task_handle) => {
+                router_watch_task = Some(task_handle);
+            }
+            Err(err) => {
+                warn!(
+                    target: "velocity::config",
+                    error = %err,
+                    file = %resolved.display(),
+                    "failed to start serve configuration watcher"
+                );
+            }
+        }
+        Some(handle)
+    } else {
+        None
+    };
+
     let edge_app = if let Some(config_path) = &edge_config {
         let resolved = resolve_config_path(&root, config_path);
         let app = load_edge_app(&resolved, &root).await?;
@@ -853,12 +1002,26 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
         None
     };
 
-    let server = Server::bind(listen, config).await?;
+    let server = Server::bind(listen, server_config).await?;
     let local = server
         .local_addr()
         .context("failed to query bound socket address")?;
 
+    let mut https_handle = if let Some(cfg) = https_plan {
+        let https_server = HttpsServer::bind_with_router(cfg, router_handle.clone())
+            .await
+            .context("failed to bind HTTPS preview listener")?;
+        let https_addr = https_server
+            .local_addr()
+            .context("failed to query HTTPS preview address")?;
+        info!(address = %https_addr, profile = ?profile, "HTTPS preview listener started");
+        Some(https_server.spawn_hello())
+    } else {
+        None
+    };
+
     if let Some(proxy) = proxy.clone() {
+        let telemetry = telemetry.clone();
         info!(
             address = %local,
             upstream = %proxy.upstream(),
@@ -870,7 +1033,20 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
 
         let serve_future = server.serve(move |request: Request| {
             let proxy = Arc::clone(&proxy);
-            async move { proxy.handle(request).await }
+            let telemetry = telemetry.clone();
+            async move {
+                let (method_label, target_label) = request_labels(&request);
+                let span = info_span!(
+                    "velocity_http_request",
+                    method = %method_label,
+                    target = %target_label
+                );
+                let _guard = span.enter();
+                telemetry.request_started();
+                let response = proxy.handle(request).await;
+                telemetry.request_finished();
+                response
+            }
         });
 
         tokio::select! {
@@ -886,7 +1062,15 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
                 info!("shutdown signal received; terminating server");
             }
         }
+
+        if let Some(handle) = https_handle.take() {
+            handle
+                .shutdown()
+                .await
+                .context("failed to shutdown HTTPS preview listener")?;
+        }
     } else {
+        let telemetry = telemetry.clone();
         info!(
             address = %local,
             root = %root.display(),
@@ -902,17 +1086,64 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
         });
 
         let edge_app = edge_app.clone();
+        let router_handle = router_handle.clone();
 
         let serve_future = server.serve(move |request: Request| {
             let site = Arc::clone(&site);
             let edge_app = edge_app.clone();
+            let router_handle = router_handle.clone();
+            let telemetry = telemetry.clone();
             async move {
-                if let Some(app) = edge_app.as_ref() {
+                let (method_label, target_label) = request_labels(&request);
+                let span = info_span!(
+                    "velocity_http_request",
+                    method = %method_label,
+                    target = %target_label
+                );
+                let _guard = span.enter();
+                telemetry.request_started();
+
+                let telemetry_for_handler = telemetry.clone();
+
+                if let Some(handle) = router_handle.as_ref() {
+                    let raw_request = request.clone();
+                    match EdgeRequest::from_pqq(raw_request) {
+                        Ok(edge_request) => {
+                            let router = handle.current();
+                            if let Some(route) = router.resolve(
+                                edge_request.host(),
+                                edge_request.method(),
+                                edge_request.path(),
+                            ) {
+                                if let Some(rebased) = edge_request.strip_prefix(&route.prefix) {
+                                    match route.handler.handle(rebased).await {
+                                        Ok(response) => {
+                                            telemetry.request_finished();
+                                            return response.into_transport_response();
+                                        }
+                                        Err(err) => {
+                                            telemetry.request_finished();
+                                            return EdgeResponse::from(err).into_transport_response();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            telemetry.request_finished();
+                            return EdgeResponse::from(err).into_transport_response();
+                        }
+                    }
+                }
+
+                let response = if let Some(app) = edge_app.as_ref() {
                     let fallback = request.clone();
                     match app.handle(request).await {
                         Ok(response) => response,
                         Err(err) => match err {
-                            EdgeError::NotFound { .. } => handle_request(site, fallback).await,
+                            EdgeError::NotFound { .. } => {
+                                handle_request(site, fallback, telemetry_for_handler).await
+                            }
                             other => {
                                 warn!(target: "velocity::edge", error = %other, "edge handler failed");
                                 EdgeResponse::from(other).into_transport_response()
@@ -920,8 +1151,11 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
                         },
                     }
                 } else {
-                    handle_request(site, request).await
-                }
+                    handle_request(site, request, telemetry_for_handler).await
+                };
+
+                telemetry.request_finished();
+                response
             }
         });
 
@@ -938,39 +1172,103 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
                 info!("shutdown signal received; terminating server");
             }
         }
+
+        if let Some(handle) = https_handle.take() {
+            handle
+                .shutdown()
+                .await
+                .context("failed to shutdown HTTPS preview listener")?;
+        }
     }
+
+    if let Some(task) = router_watch_task.take() {
+        if let Err(err) = task.await {
+            warn!(
+                target: "velocity::config",
+                error = %err,
+                "serve config watcher task terminated unexpectedly"
+            );
+        }
+    }
+
+    telemetry.shutdown().await?;
 
     Ok(())
 }
 
-async fn handle_request(site: Arc<SiteConfig>, request: Request) -> Response {
-    match build_response(site, request).await {
-        Ok(response) => response,
-        Err(err) => match err {
-            SiteError::BadRequest => {
-                http_text_response("400 Bad Request", "Malformed HTTP request")
-            }
-            SiteError::Forbidden => {
-                http_text_response("403 Forbidden", "Directory traversal is not allowed")
-            }
-            SiteError::MethodNotAllowed(method) => http_text_response(
-                "405 Method Not Allowed",
-                format!("Method {method} is not supported"),
-            ),
-            SiteError::NotFound => http_text_response("404 Not Found", "Resource not found"),
-            SiteError::Io(io_err) => {
-                error!(error = %io_err, "I/O error while serving request");
-                http_text_response("500 Internal Server Error", "Internal server error")
-            }
-            SiteError::InvalidPath => http_text_response("400 Bad Request", "Invalid request path"),
-            SiteError::Utf8(_) => {
-                http_text_response("400 Bad Request", "Request target was not valid UTF-8")
-            }
-        },
+struct ResponseOutcome {
+    response: Response,
+    status: String,
+    bytes: usize,
+}
+
+impl ResponseOutcome {
+    fn finish(self, telemetry: &TelemetryHandle, method: &str) -> Response {
+        let status_code = self
+            .status
+            .split_whitespace()
+            .next()
+            .unwrap_or("200")
+            .to_string();
+        telemetry.observe_http(method, &status_code, self.bytes);
+        self.response
+    }
+
+    fn into_response(self) -> Response {
+        self.response
     }
 }
 
-async fn build_response(site: Arc<SiteConfig>, request: Request) -> Result<Response, SiteError> {
+async fn handle_request(
+    site: Arc<SiteConfig>,
+    request: Request,
+    telemetry: TelemetryHandle,
+) -> Response {
+    let line = match request.http_request_line() {
+        Some(line) => line,
+        None => {
+            let outcome = http_text_response("400 Bad Request", "Malformed HTTP request");
+            return outcome.finish(&telemetry, "UNKNOWN");
+        }
+    };
+
+    let method = line.method.to_string();
+
+    match build_response(site, request).await {
+        Ok(outcome) => outcome.finish(&telemetry, &method),
+        Err(err) => {
+            let outcome = match err {
+                SiteError::BadRequest => {
+                    http_text_response("400 Bad Request", "Malformed HTTP request")
+                }
+                SiteError::Forbidden => {
+                    http_text_response("403 Forbidden", "Directory traversal is not allowed")
+                }
+                SiteError::MethodNotAllowed(method) => http_text_response(
+                    "405 Method Not Allowed",
+                    format!("Method {method} is not supported"),
+                ),
+                SiteError::NotFound => http_text_response("404 Not Found", "Resource not found"),
+                SiteError::Io(io_err) => {
+                    error!(error = %io_err, "I/O error while serving request");
+                    http_text_response("500 Internal Server Error", "Internal server error")
+                }
+                SiteError::InvalidPath => {
+                    http_text_response("400 Bad Request", "Invalid request path")
+                }
+                SiteError::Utf8(_) => {
+                    http_text_response("400 Bad Request", "Request target was not valid UTF-8")
+                }
+            };
+            outcome.finish(&telemetry, &method)
+        }
+    }
+}
+
+async fn build_response(
+    site: Arc<SiteConfig>,
+    request: Request,
+) -> Result<ResponseOutcome, SiteError> {
     let line = request.http_request_line().ok_or(SiteError::BadRequest)?;
 
     match line.method {
@@ -1008,7 +1306,7 @@ async fn handle_directory(
     site: Arc<SiteConfig>,
     dir: &Path,
     method: &str,
-) -> Result<Response, SiteError> {
+) -> Result<ResponseOutcome, SiteError> {
     let index_path = dir.join(&site.index);
     if tokio::fs::metadata(&index_path)
         .await
@@ -1033,6 +1331,121 @@ async fn handle_directory(
         listing.as_bytes(),
         method == "HEAD",
     ))
+}
+
+async fn load_serve_config_file(path: &Path) -> Result<ServeConfig> {
+    let source = tokio::fs::read_to_string(path)
+        .await
+        .with_context(|| format!("failed to read serve config {}", path.display()))?;
+    let ext = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default();
+    if ext.eq_ignore_ascii_case("json") {
+        serde_json::from_str(&source)
+            .with_context(|| format!("serve config {} is not valid JSON", path.display()))
+    } else {
+        serde_yaml::from_str(&source)
+            .with_context(|| format!("serve config {} is not valid YAML", path.display()))
+    }
+}
+
+fn build_serve_router(config: ServeConfig, base_root: &Path) -> Result<Arc<ServeRouter>> {
+    let router = ServeRouter::from_config(config, base_root)
+        .map_err(|err| anyhow::anyhow!("failed to build serve router: {err}"))?;
+    Ok(Arc::new(router))
+}
+
+fn spawn_router_watcher(
+    path: PathBuf,
+    base_root: PathBuf,
+    controller: ServeRouterController,
+) -> Result<JoinHandle<()>> {
+    Ok(tokio::spawn(async move {
+        if let Err(err) = watch_router_config(path, base_root, controller).await {
+            warn!(target: "velocity::config", error = %err, "serve config watcher exited");
+        }
+    }))
+}
+
+async fn watch_router_config(
+    path: PathBuf,
+    base_root: PathBuf,
+    controller: ServeRouterController,
+) -> Result<()> {
+    let (event_tx, mut event_rx) = mpsc::channel(16);
+    let mut watcher = RecommendedWatcher::new(
+        {
+            let event_tx = event_tx.clone();
+            move |res| {
+                let _ = event_tx.blocking_send(res);
+            }
+        },
+        NotifyConfig::default(),
+    )
+    .with_context(|| format!("failed to watch serve config {}", path.display()))?;
+
+    watcher
+        .watch(path.as_path(), RecursiveMode::NonRecursive)
+        .with_context(|| format!("failed to register watcher for {}", path.display()))?;
+
+    while let Some(event) = event_rx.recv().await {
+        match event {
+            Ok(event) => {
+                if should_reload(&event.kind) {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    match load_serve_config_file(&path).await {
+                        Ok(config) => match build_serve_router(config, &base_root) {
+                            Ok(router) => {
+                                if let Err(err) = controller.update(router) {
+                                    warn!(
+                                        target: "velocity::config",
+                                        error = %err,
+                                        "failed to publish reloaded router"
+                                    );
+                                } else {
+                                    info!(
+                                        target: "velocity::config",
+                                        file = %path.display(),
+                                        "serve configuration reloaded"
+                                    );
+                                }
+                            }
+                            Err(err) => warn!(
+                                target: "velocity::config",
+                                error = %err,
+                                file = %path.display(),
+                                "serve router rebuild failed"
+                            ),
+                        },
+                        Err(err) => warn!(
+                            target: "velocity::config",
+                            error = %err,
+                            file = %path.display(),
+                            "failed to reload serve configuration"
+                        ),
+                    }
+                }
+            }
+            Err(err) => warn!(
+                target: "velocity::config",
+                error = %err,
+                file = %path.display(),
+                "serve config watch event failed"
+            ),
+        }
+    }
+
+    Ok(())
+}
+
+fn should_reload(kind: &EventKind) -> bool {
+    matches!(
+        kind,
+        EventKind::Create(_)
+            | EventKind::Modify(ModifyKind::Name(_))
+            | EventKind::Modify(ModifyKind::Data(_))
+    )
 }
 
 async fn render_directory_listing(dir: &Path) -> Result<String, SiteError> {
@@ -1077,7 +1490,7 @@ async fn render_directory_listing(dir: &Path) -> Result<String, SiteError> {
     Ok(body)
 }
 
-fn http_response(status: &str, mime: Mime, body: &[u8], head: bool) -> Response {
+fn http_response(status: &str, mime: Mime, body: &[u8], head: bool) -> ResponseOutcome {
     let mut response = format!(
         "HTTP/1.1 {status}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
         body.len()
@@ -1088,15 +1501,27 @@ fn http_response(status: &str, mime: Mime, body: &[u8], head: bool) -> Response 
         response.extend_from_slice(body);
     }
 
-    Response::from_bytes(response)
+    ResponseOutcome {
+        response: Response::from_bytes(response),
+        status: status.to_string(),
+        bytes: body.len(),
+    }
 }
 
-fn http_text_response(status: &str, message: impl Into<Cow<'static, str>>) -> Response {
+fn http_text_response(status: &str, message: impl Into<Cow<'static, str>>) -> ResponseOutcome {
     let body = message.into();
     let mime = "text/plain; charset=utf-8"
         .parse()
         .expect("valid text/plain mime");
     http_response(status, mime, body.as_bytes(), false)
+}
+
+fn request_labels(request: &Request) -> (String, String) {
+    if let Some(line) = request.http_request_line() {
+        (line.method.to_string(), line.target.to_string())
+    } else {
+        ("UNKNOWN".to_string(), "<opaque>".to_string())
+    }
 }
 
 fn normalize_target(target: &str) -> Result<PathBuf, SiteError> {

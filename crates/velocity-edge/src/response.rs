@@ -107,6 +107,12 @@ impl EdgeResponse {
         &self.body
     }
 
+    /// Consume the response into status, headers, and body components.
+    pub fn into_parts(mut self) -> (StatusCode, HeaderMap, Bytes) {
+        self.ensure_content_length();
+        (self.status, self.headers, self.body)
+    }
+
     /// Convert the edge response into a Velocity transport response.
     pub fn into_transport_response(self) -> pqq_server::Response {
         let mut response = self;

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 
 use bytes::Bytes;
-use http::{header::HeaderName, HeaderMap, HeaderValue, Method};
+use http::{header::HeaderName, header::HOST, HeaderMap, HeaderValue, Method};
 use httparse::Status;
 use url::form_urlencoded::parse as parse_query;
 
@@ -62,19 +62,8 @@ impl EdgeRequest {
             headers.append(name, value);
         }
 
-        let (path, query_map) = split_target(target);
         let body = Bytes::copy_from_slice(&payload[header_len..]);
-
-        Ok(Self {
-            method,
-            path,
-            target: target.to_string(),
-            query: query_map,
-            headers,
-            body,
-            peer,
-            path_params: HashMap::new(),
-        })
+        Self::from_http_parts(method, target.to_string(), headers, body, peer)
     }
 
     pub fn method(&self) -> &Method {
@@ -87,6 +76,12 @@ impl EdgeRequest {
 
     pub fn target(&self) -> &str {
         &self.target
+    }
+
+    pub fn host(&self) -> Option<&str> {
+        self.headers
+            .get(HOST)
+            .and_then(|value| std::str::from_utf8(value.as_bytes()).ok())
     }
 
     pub fn query_values(&self, key: &str) -> Option<&[String]> {
@@ -135,6 +130,49 @@ impl EdgeRequest {
         self
     }
 
+    pub fn strip_prefix(&self, prefix: &str) -> Option<Self> {
+        if prefix == "/" {
+            return Some(self.clone());
+        }
+        if !self.path.starts_with(prefix) {
+            return None;
+        }
+        let remainder = &self.path[prefix.len()..];
+        if !remainder.is_empty() && !remainder.starts_with('/') {
+            return None;
+        }
+        let new_path = if remainder.is_empty() { "/" } else { remainder };
+        let mut clone = self.clone();
+        clone.path = new_path.to_string();
+        clone.target = if let Some(idx) = self.target.find('?') {
+            format!("{}{}", clone.path, &self.target[idx..])
+        } else {
+            clone.path.clone()
+        };
+        clone.path_params.clear();
+        Some(clone)
+    }
+
+    pub fn from_http_parts(
+        method: Method,
+        target: String,
+        headers: HeaderMap,
+        body: Bytes,
+        peer: SocketAddr,
+    ) -> EdgeResult<Self> {
+        let (path, query_map) = split_target(&target);
+        Ok(Self {
+            method,
+            path,
+            target,
+            query: query_map,
+            headers,
+            body,
+            peer,
+            path_params: HashMap::new(),
+        })
+    }
+
     #[cfg(test)]
     pub fn testing(method: Method, target: &str, peer: SocketAddr) -> Self {
         let (path, query) = split_target(target);
@@ -164,4 +202,30 @@ fn split_target(target: &str) -> (String, HashMap<String, Vec<String>>) {
         }
     }
     (path, map)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http::{header::HOST, HeaderMap, HeaderValue, Method};
+
+    #[test]
+    fn strip_prefix_adjusts_path_and_target() {
+        let peer: SocketAddr = "127.0.0.1:4000".parse().unwrap();
+        let request = EdgeRequest::testing(Method::GET, "/api/users?id=10", peer);
+        let rebased = request.strip_prefix("/api").expect("prefix matches");
+        assert_eq!(rebased.path(), "/users");
+        assert_eq!(rebased.target(), "/users?id=10");
+    }
+
+    #[test]
+    fn host_header_accessor_returns_value() {
+        let peer: SocketAddr = "127.0.0.1:4000".parse().unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(HOST, HeaderValue::from_static("example.com"));
+        let request =
+            EdgeRequest::from_http_parts(Method::GET, "/".to_string(), headers, Bytes::new(), peer)
+                .expect("edge request");
+        assert_eq!(request.host(), Some("example.com"));
+    }
 }

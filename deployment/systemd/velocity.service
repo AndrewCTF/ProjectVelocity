@@ -1,0 +1,23 @@
+[Unit]
+Description=Velocity static site server
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/velocity serve \
+  --listen 0.0.0.0:4433 \
+  --root /var/www/velocity \
+  --index index.html \
+  --metrics-listen 127.0.0.1:9300 \
+  --serve-https \
+  --https-listen 0.0.0.0:8443
+Restart=always
+RestartSec=5s
+User=www-data
+Group=www-data
+Environment=RUST_LOG=info
+WorkingDirectory=/var/www/velocity
+
+[Install]
+WantedBy=multi-user.target

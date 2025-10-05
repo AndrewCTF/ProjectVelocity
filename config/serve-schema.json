@@ -1,0 +1,159 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Velocity Serve Configuration",
+  "type": "object",
+  "required": ["hosts"],
+  "properties": {
+    "default_host": {
+      "type": "string",
+      "description": "Hostname to use when an incoming request does not match any explicit entry."
+    },
+    "hosts": {
+      "type": "array",
+      "description": "List of host definitions that map hostnames to handlers.",
+      "items": { "$ref": "#/$defs/host" },
+      "minItems": 1
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "host": {
+      "type": "object",
+      "required": ["hostname", "routes"],
+      "properties": {
+        "hostname": {
+          "type": "string",
+          "description": "Primary hostname matched by this entry."
+        },
+        "aliases": {
+          "type": "array",
+          "description": "Additional hostnames that should resolve to this entry.",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "root": {
+          "type": "string",
+          "description": "Base directory relative to the server root for this host's handlers."
+        },
+        "routes": {
+          "type": "array",
+          "description": "Ordered list of path-based routes evaluated for this host.",
+          "items": { "$ref": "#/$defs/route" },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "route": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "path_prefix": {
+          "type": "string",
+          "default": "/",
+          "description": "Leading path segment that must match before this route is considered."
+        },
+        "methods": {
+          "type": "array",
+          "description": "Optional list of HTTP methods; include 'ANY' to accept all methods.",
+          "items": { "type": "string" },
+          "default": ["GET"]
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["static", "proxy", "edge"],
+          "description": "Handler type for this route."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "static" } } },
+          "then": { "$ref": "#/$defs/staticTarget" }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "proxy" } } },
+          "then": { "$ref": "#/$defs/proxyTarget" }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "edge" } } },
+          "then": { "$ref": "#/$defs/edgeTarget" }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "staticTarget": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "static" },
+        "root": {
+          "type": "string",
+          "description": "Directory relative to the host root to serve for this route."
+        },
+        "index": {
+          "type": "string",
+          "default": "index.html",
+          "description": "Default file to serve when the path resolves to a directory."
+        },
+        "listings": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable HTML directory listings when no index file is present."
+        }
+      }
+    },
+    "proxyTarget": {
+      "type": "object",
+      "required": ["kind", "origin"],
+      "properties": {
+        "kind": { "const": "proxy" },
+        "origin": {
+          "type": "string",
+          "format": "uri",
+          "description": "Upstream origin base URL (http or https)."
+        },
+        "preserve_host": {
+          "type": "boolean",
+          "default": false,
+          "description": "Forward the incoming Host header to the upstream origin."
+        },
+        "connect_timeout": {
+          "type": "string",
+          "default": "10s",
+          "description": "Timeout for establishing upstream connections."
+        },
+        "response_timeout": {
+          "type": "string",
+          "default": "30s",
+          "description": "Timeout for receiving upstream responses."
+        },
+        "idle_timeout": {
+          "type": "string",
+          "default": "90s",
+          "description": "Idle keep-alive duration for upstream connections."
+        },
+        "tcp_keepalive": {
+          "type": "string",
+          "default": "60s",
+          "description": "Interval between TCP keepalive probes applied to upstream sockets."
+        },
+        "streaming": {
+          "type": "boolean",
+          "default": false,
+          "description": "Toggle streaming responses using chunked transfer encoding."
+        }
+      }
+    },
+    "edgeTarget": {
+      "type": "object",
+      "required": ["kind", "config"],
+      "properties": {
+        "kind": { "const": "edge" },
+        "config": {
+          "type": "object",
+          "description": "Embedded velocity-edge configuration for this route."
+        }
+      }
+    }
+  }
+}

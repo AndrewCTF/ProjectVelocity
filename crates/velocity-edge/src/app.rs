@@ -242,7 +242,7 @@ impl EdgeApp {
         Ok(response.into_transport_response())
     }
 
-    async fn dispatch(&self, request: EdgeRequest) -> EdgeResult<EdgeResponse> {
+    pub async fn dispatch(&self, request: EdgeRequest) -> EdgeResult<EdgeResponse> {
         let match_result = self
             .router
             .resolve(request.method(), request.path())

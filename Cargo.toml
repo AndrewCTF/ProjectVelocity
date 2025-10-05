@@ -8,6 +8,7 @@ members = [
     "crates/velocity-core",
     "crates/velocity-cli",
     "crates/velocity-edge",
+    "crates/velocity-acme",
     "native-bindings",
     "examples/handshake-demo",
     "examples/static-file-server",

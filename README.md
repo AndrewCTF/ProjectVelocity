@@ -23,7 +23,7 @@ This repository hosts a hybrid classical + post-quantum secure transport protoco
 - `examples/browser-gateway` – Launches a Velocity content server plus an HTTP gateway so stock browsers can fetch PQ-protected assets via a local proxy.
 - `spec/` – RFC-style draft describing Velocity wire protocol details.
 - `spec/formal` – Tamarin model sketches verifying the hybrid handshake at a symbolic level.
-- `docs/` – Design, security, deployment, and governance documentation. Start with [`docs/index.md`](docs/index.md) or the comprehensive [Velocity User Handbook](docs/user-handbook.md).
+- `docs/` – Design, security, deployment, and governance documentation. Start with [`docs/index.md`](docs/index.md), review the new [`docs/https-migration.md`](docs/https-migration.md) cutover guide, and follow [`docs/systemd-service.md`](docs/systemd-service.md) for auto-restart deployments.
 - `benchmarks/handshake-bench` – Criterion benchmark suite for the current handshake prototype.
 - `.github/` – CI workflows, instruction files, issue templates.
 
@@ -52,6 +52,14 @@ cargo test --workspace
 	When you need to front an existing app (Vite, Next.js, API servers), enable reverse-proxy mode with `--proxy https://upstream:3000`. The proxy now enforces connect/response timeouts (10s/30s by default), retries cleanly on keep-alive connections, and turns upstream TLS validation failures into clear 502 responses so you immediately see certificate issues without digging through logs. Tune the behaviors with flags like `--proxy-connect-timeout 5s`, `--proxy-response-timeout 45s`, or `--proxy-idle-timeout 2m`, and pass `--proxy-stream` to stream upstream bodies directly to clients via HTTP/1.1 chunked encoding instead of buffering everything in memory.
 
 	Platform-specific bootstrap steps for Debian/Ubuntu, Fedora, macOS, and Windows live in `docs/deployment.md` alongside a sample `systemd` unit.
+
+- **Observability built-in:**
+
+	```pwsh
+	cargo run -p velocity-cli -- serve --root public --metrics-listen 127.0.0.1:9300 --log-format json
+	```
+
+	Stage 4 of the HTTPS roadmap ships structured logging and a Prometheus exporter. Scrape `/metrics` to feed Grafana/Prometheus dashboards and follow the `docs/systemd-service.md` guide to keep the exporter running under `systemd` with automatic restarts.
 
 - **Easy client auto-discovery:**
 

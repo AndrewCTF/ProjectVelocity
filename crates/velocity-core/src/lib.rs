@@ -15,6 +15,10 @@
 //! for discussion, fuzzing and performance work while the full QUIC-
 //! compatible transport machinery is developed.
 
+pub mod https;
+
+pub use https::{HttpsConfig, HttpsError, HttpsHandle, HttpsServer};
+
 use ahash::AHashMap;
 use bytes::BytesMut;
 use hmac::{Hmac, Mac};

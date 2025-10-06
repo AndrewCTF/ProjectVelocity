@@ -17,7 +17,6 @@ use anyhow::{bail, ensure, Context, Result};
 use bytes::Bytes;
 use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 use edge::{load_edge_app, resolve_config_path};
-use simple_config::{load_combined_config, ConfigOverrides};
 use futures_util::{
     stream::{self, BoxStream},
     StreamExt,
@@ -42,6 +41,7 @@ use reqwest::{
     Client, Method, Url,
 };
 use serde::Serialize;
+use simple_config::{load_combined_config, ConfigOverrides};
 use thiserror::Error;
 use tokio::signal;
 use tokio::sync::mpsc;

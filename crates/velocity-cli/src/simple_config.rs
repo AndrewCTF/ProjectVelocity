@@ -393,7 +393,12 @@ impl SimpleHost {
         }
 
         if let Some(static_dir) = self.static_dir {
-            routes.push(static_route("/", static_dir, self.static_index.clone(), self.static_listings));
+            routes.push(static_route(
+                "/",
+                static_dir,
+                self.static_index.clone(),
+                self.static_listings,
+            ));
         }
 
         if routes.is_empty() {
@@ -441,7 +446,11 @@ impl SimpleProxyRoute {
     fn into_host_route(self) -> Result<HostRouteConfig> {
         Ok(HostRouteConfig {
             path_prefix: self.path,
-            methods: self.settings.methods.clone().unwrap_or_else(default_methods),
+            methods: self
+                .settings
+                .methods
+                .clone()
+                .unwrap_or_else(default_methods),
             target: HostTargetConfig::Proxy(self.settings.into_proxy_target()?),
         })
     }
@@ -560,7 +569,9 @@ impl SimpleProxySettings {
             origin: self.upstream,
             preserve_host: self.preserve_host,
             connect_timeout: self.connect_timeout.unwrap_or_else(default_connect_timeout),
-            response_timeout: self.response_timeout.unwrap_or_else(default_response_timeout),
+            response_timeout: self
+                .response_timeout
+                .unwrap_or_else(default_response_timeout),
             idle_timeout: self.idle_timeout.unwrap_or_else(default_idle_timeout),
             tcp_keepalive: self.tcp_keepalive.unwrap_or_else(default_tcp_keepalive),
             streaming: self.streaming.unwrap_or(false),

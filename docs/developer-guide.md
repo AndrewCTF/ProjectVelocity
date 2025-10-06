@@ -1,65 +1,6 @@
 # Velocity Developer Guide
 
 > A comprehensive reference for contributors, reviewers, and maintainers working on the Velocity reference stack. Covers repository structure, toolchain requirements, testing strategy, coding standards, and release workflow.
-
----
-
-## 1. Repository anatomy
-
-```text
-├── Cargo.toml (workspace)
-├── crates/
-│   ├── velocity-core/        # transport primitives, frames, loss detection
-│   ├── velocity-crypto/      # handshake state machine, certificate validation
-│   ├── velocity-server/      # HTTP adapters, reverse proxy runtime
-│   ├── velocity-client/      # client SDK, CLI
-│   ├── velocity-ssh-bridge/  # SSH transport adapter (vshd, vsh-proxy)
-│   └── ... additional crates (native bindings, examples)
-├── docs/                     # documentation suite (this file, operations, security)
-├── spec/                     # protocol draft, handshake transcript, formal notes
-├── fuzz/                     # honggfuzz/libFuzzer targets (handshake, parser)
-├── benchmarks/               # Criterion harnesses, AF_XDP experiments
-├── .github/                  # CI workflows, codeowners, issue templates
-└── native-bindings/          # C ABI wrappers and headers
-```
-
-Workspace members are grouped by domain. Crate-level README files outline APIs and invariants; they are authoritative for public surface areas.
-
-## 2. Toolchain & dependencies
-
-* **Rust**: stable 1.81 (pinned via `rust-toolchain.toml`). Nightly permitted for experimentation but not required.
-* **Cargo components**: `rustfmt`, `clippy`, `rust-src`, `llvm-tools-preview` (for coverage + instrumentation).
-* **External tooling**: `cargo-audit`, `cargo-deny`, `cargo-llvm-cov`, `just` (helper tasks), `protoc` (for control plane), `ninja` (when enabling PQ accelerated backends).
-* **Optional**: `afl-fuzz`, `honggfuzz`, `bazelisk` if running cross-language integration tests.
-
-## 3. Build matrix
-
-| Profile | Command | Notes |
-|---------|---------|-------|
-| Debug | `cargo build --workspace` | Default dev target. |
-| Release | `cargo build --workspace --release` | Required before committing performance changes. |
-| Feature sets | `cargo check --workspace --all-features` | Ensures optional features (e.g., `native-kem`, `metrics`) compile. |
-| Documentation | `cargo doc --workspace --no-deps` | Docs must compile cleanly. |
-| Coverage | `cargo llvm-cov --workspace --lcov --output-path coverage.lcov` | Run on mainline weekly. |
-
-## 4. Development workflow
-
-1. **Create a branch** named `feature/<topic>` or `bugfix/<id>`.
-2. **Sync instruction files**: ensure `.github/instructions/*.md` has been read for policy alignment.
-3. **Implement changes** using workspace-aware tools. Do not edit generated files manually.
-4. **Run quality gates**:
-  ```pwsh
-  cargo fmt --all
-  cargo clippy --workspace --all-targets --all-features -- -D warnings
-  cargo test --workspace
-  cargo audit
-  ```
-5. **Add or update tests**. For transport or handshake changes, provide unit tests and an integration test under `crates/velocity-server/tests/`.
-6. **Document behaviour**. Update relevant docs in `docs/` and spec sections if wire semantics change.
-7. **Open a PR** targeting `main`. Each PR MUST include:
-  * Summary of changes & rationale.
-  * Links to updated documentation.
-  * Test results (copy-paste command outputs).
   * Security review considerations (if any).
 8. **Address CI feedback**. GitHub Actions pipeline runs `fmt`, `clippy`, `test`, `audit`, fuzz smoke tests, and doc builds.
 

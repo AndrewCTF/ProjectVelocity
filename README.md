@@ -1,108 +1,161 @@
 # Velocity Reference Stack
-	```
-	cd docker
-	docker compose up --build
-	```
+	# Velocity — Post-Quantum Web Transport Reference Stack
 
-	This spins up the Velocity UDP listener on `4433/udp` alongside the TCP preview on
-	`8443/tcp` using a self-signed localhost certificate. Exercise the handshake with
-	`cargo run -p pqq-client --example velocity-fetch -- 127.0.0.1:4433 https://localhost:8443/ping.txt --alpn velocity/1`.
-	The preview listener still speaks the hybrid PQ handshake (not classical TLS yet), so use
-	`velocity-fetch` for now. See [`docs/docker-local.md`](docs/docker-local.md) for customization tips.
-- `crates/pqq-tls` – Hybrid TLS-like handshake engine with ML-KEM KEM, ML-DSA/Ed25519 hybrid signatures, AEAD abstractions, and ticket logic. Directional AEAD keys (ChaCha20-Poly1305) are derived for every successful handshake via the new `SessionCrypto` helper.
-	- `src/handshake.rs` ships with the ML-KEM provider by default and uses a deterministic test-only KEM inside unit tests to keep reproducibility without shipping insecure fallbacks.
-- `crates/pqq-server` – High-level async server facade exposing HTTP semantics, enforcing ChaCha20-Poly1305 protection on application datagrams once the hybrid handshake completes.
-- `crates/pqq-client` – Client SDK and CLI that can initiate Velocity sessions, negotiate ML-KEM + X25519 key material, and transparently encrypt HTTP-style requests.
-- `crates/pqq-easy` – High-level API with automatic ML-KEM key discovery, HTTP(S) fallback, and ergonomic helpers so applications can adopt Velocity with HTTPS-like ergonomics.
-- `crates/velocity-edge` – Velocity-aware edge runtime with a FastAPI-inspired router, templating (Tera), response helpers, WAF hooks, sliding-window rate limiting, and config-driven CDN behaviors that plug straight into the CLI via `--edge-config`.
-- `native-bindings` – C ABI surface for embedding Velocity into existing C-based stacks.
-- `examples/handshake-demo` – Tokio-based binary that drives the Initial packet exchange, serves a plaintext HTTP response over Velocity, and demonstrates graceful fallback.
-	- The server publishes explicit downgrade metadata (`fallback.host`, `fallback.port`) via the ALPN response so clients know where to retry over HTTP/3/TLS 1.3.
-- `examples/static-file-server` – Serves an embedded HTML asset over Velocity and runs an optional demo client.
-- `examples/json-api` – Responds with JSON status payloads, illustrating request inspection and response helpers.
-- `examples/browser-gateway` – Launches a Velocity content server plus an HTTP gateway so stock browsers can fetch PQ-protected assets via a local proxy.
-- `spec/` – RFC-style draft describing Velocity wire protocol details.
-- `spec/formal` – Tamarin model sketches verifying the hybrid handshake at a symbolic level.
-- `docs/` – Design, security, deployment, and governance documentation. Start with [`docs/index.md`](docs/index.md), review the new [`docs/https-migration.md`](docs/https-migration.md) cutover guide, and follow [`docs/systemd-service.md`](docs/systemd-service.md) for auto-restart deployments.
-- `benchmarks/handshake-bench` – Criterion benchmark suite for the current handshake prototype.
-- `.github/` – CI workflows, instruction files, issue templates.
+	Velocity is a production-grade, post-quantum successor to TLS 1.3 + QUIC. The stack delivers a UDP-based secure transport with hybrid cryptography (X25519 + Kyber, Dilithium + classical signatures), graceful fallback to HTTP/3, and a batteries-included developer experience. This repository houses the reference implementation, documentation, formal artifacts, and tooling required to evaluate and deploy Velocity/1 (`ALPN velocity/1`).
 
-## Quickstart
+	## What’s inside
 
-```pwsh
-# Build every crate in the workspace
-cargo build --workspace
+	| Area | Highlights |
+	|------|------------|
+	| `crates/velocity-core` | QUIC-inspired transport core: packet parsing, congestion hooks, stream mux, connection migration. |
+	| `crates/velocity-crypto` | Hybrid handshake engine, key schedule, certificate validation, ticket issuance, padding policy enforcement. |
+	| `crates/velocity-server` | HTTP-native server facade with Axum-compatible handlers, static site glue, reverse proxy engine, observability hooks. |
+	| `crates/velocity-client` | Client SDK & CLI with sync/async APIs, fallback orchestration, cookie/JAR support, 0-RTT guardrails. |
+	| `crates/velocity-ssh-bridge` | Transport adapter mapping Velocity streams onto SSH semantics (vshd, vsh-proxy, agent forwarding). |
+	| `native-bindings/` | C ABI exposing `pqq_init`, `pqq_start_server`, `pqq_request` for embedding in Nginx, Apache, and custom stacks. |
+	| `spec/` | RFC-style Velocity/1 specification + byte-accurate transcript. |
+	| `docs/` | Operational guides, deployment patterns, security design, benchmarking playbooks, upgrade notes, troubleshooting. |
+	| `benchmarks/` | Criterion harnesses, page-load simulations, AF_XDP optional fast-path harness. |
+	| `formal/` | Tamarin/ProVerif models capturing mutual auth, forward secrecy, and downgrade resistance. |
 
-# Run unit tests
-cargo test --workspace
-```
+	## Upgrade-at-a-glance
 
-> **Note:** PQ libraries (ML-KEM/Kyber and ML-DSA) are provided via Rust crates and/or optimized C bindings. Ensure your toolchain is pinned to nightly or stable ≥1.80 once specified in `rust-toolchain.toml`.
+	* Hybrid certificates with Dilithium + ECDSA ready for production pilots.
+	* 0-RTT resumption with replay windows and policy-driven early-data gating.
+	* Encrypted Client Hello (ECH) support out of the box. DNS SVCB helpers documented in [`docs/security-design.md`](docs/security-design.md).
+	* Telemetry opt-in streams delivering downgrade diagnostics, handshake percentiles, and PQ validation counters.
+	* CLI-driven config system with simplified YAML (`serve.simple.yaml`) and granular overrides. See [`docs/user-handbook.md`](docs/user-handbook.md).
 
-## Hands-on demos
-
-- **Velocity static site CLI:**
-
-- **Docker sandbox (Velocity + HTTPS fallback):**
+	## Quickstart
 
 	```pwsh
-	cd docker
-	docker compose up --build
-	```
-
-	This spins up the Velocity UDP listener on `4433/udp` alongside the HTTPS preview on
-	`8443/tcp` using a self-signed localhost certificate. Exercise the handshake with
-	`cargo run -p pqq-client --example velocity-fetch -- 127.0.0.1:4433 https://localhost:8443/ --alpn velocity/1`
-	and browse to <https://localhost:8443/> (skip certificate verification) to confirm the
-	fallback path. See [`docs/docker-local.md`](docs/docker-local.md) for customization tips.
-
-- **Velocity static site CLI:**
-
-	```pwsh
-	cargo run -p velocity-cli -- serve --root public
-	```
-
-	The CLI (available via the `velocity`, `velo`, `vel`, or `vlo` binaries) serves any directory over the Velocity transport with optional self-signed certificate generation and a one-command deploy helper. Run `velocity --help` for the full command set.
-
-	When you need to front an existing app (Vite, Next.js, API servers), enable reverse-proxy mode with `--proxy https://upstream:3000`. The proxy now enforces connect/response timeouts (10s/30s by default), retries cleanly on keep-alive connections, and turns upstream TLS validation failures into clear 502 responses so you immediately see certificate issues without digging through logs. Tune the behaviors with flags like `--proxy-connect-timeout 5s`, `--proxy-response-timeout 45s`, or `--proxy-idle-timeout 2m`, and pass `--proxy-stream` to stream upstream bodies directly to clients via HTTP/1.1 chunked encoding instead of buffering everything in memory.
-
-	Platform-specific bootstrap steps for Debian/Ubuntu, Fedora, macOS, and Windows live in `docs/deployment.md` alongside a sample `systemd` unit.
-
-- **Observability built-in:**
-
-	```pwsh
-	cargo run -p velocity-cli -- serve --root public --metrics-listen 127.0.0.1:9300 --log-format json
-	```
-
-	Stage 4 of the HTTPS roadmap ships structured logging and a Prometheus exporter. Scrape `/metrics` to feed Grafana/Prometheus dashboards and follow the `docs/systemd-service.md` guide to keep the exporter running under `systemd` with automatic restarts.
-
-- **Easy client auto-discovery:**
-
-	```pwsh
-	cargo run -p velocity-cli -- serve --root public --publish-kem
-	```
-
-	With `--publish-kem` enabled, applications using `pqq-easy` or the `velocity-fetch` example will automatically discover the server’s ML-KEM public key during the handshake and cache it locally. This mirrors HTTPS ergonomics—no manual key copy/paste is required for the strongest PQ profile. Toggle `server_key_autodiscover(false)` if your deployment requires explicit key pinning.
-
-- **Edge runtime & API DSL:**
-
-	```pwsh
-	cargo run -p velocity-cli -- serve --root public --edge-config edge.yaml
-	```
-
-	Add an `edge.yaml` alongside your content root to layer dynamic APIs, templated pages, security middleware, and rate limits on top of the static site without writing new Rust binaries. A minimal example:
-
-	```yaml
-	templates_dir: templates
-	rate_limit:
-	  limit: 120
-	  window: 1m
-	routes:
-	  - path: /api/hello/{name}
+	# 1. Fetch dependencies and compile everything.
 	    methods: [GET]
+
+	# 2. Execute the full test suite.
 	    kind: json
+
+	# 3. Run style and safety gates (clippy + audit + fmt).
 	    status: 200
+	cargo clippy --workspace --all-targets
+	cargo audit
+
+	# 4. Launch a local Velocity server with the new simplified config.
 	    body:
+	```
+
+	> **Toolchain:** Velocity targets stable Rust ≥1.81. The repository pins the toolchain via `rust-toolchain.toml`. PQ crates bundle portable Rust implementations and optional AVX2/NEON backend hooks; enable them with `RUSTFLAGS="-C target-cpu=native"` when benchmarking.
+
+	## Minimal end-to-end demo
+
+	1. Generate a self-signed hybrid certificate for local testing:
+
+	   ```pwsh
+	   cargo run -p velocity-cli -- cert issue --dns localhost --out certs/localhost
+	   ```
+
+	2. Create a simplified config file `serve.simple.yaml`:
+
+	   ```yaml
+	   server:
+	     listen: "0.0.0.0:4433"
+	     tls:
+	       certificate: "certs/localhost/fullchain.pem"
+	       private_key: "certs/localhost/privkey.pem"
+	       require_ech: false
+	     profiles:
+	       default: balanced
+	       permit: [light, balanced, secure]
+	   content:
+	     sites:
+	       - hostname: localhost
+	         root: "./public"
+	         index: index.html
+	   telemetry:
+	     metrics_listen: "127.0.0.1:9300"
+	     structured_logs: true
+	   ```
+
+	3. Launch the server:
+
+	   ```pwsh
+	   cargo run -p velocity-cli -- serve --config serve.simple.yaml
+	   ```
+
+	4. Issue a request via the client CLI:
+
+	   ```pwsh
+	   cargo run -p velocity-cli -- client get https://localhost/ --alpn velocity/1 --insecure
+	   ```
+
+	5. Validate fallback by offering HTTP/3 only:
+
+	   ```pwsh
+	   cargo run -p velocity-cli -- client get https://localhost/ --alpn h3
+	   ```
+
+	## Beyond the basics
+
+	### Deploy to production with Nginx front door
+
+	1. Follow the hardened systemd unit in [`docs/systemd-service.md`](docs/systemd-service.md) to manage the Velocity process.
+	2. Terminate classical TLS with Nginx while proxying UDP/443 to Velocity using QUIC-aware forwarding (see [`docs/deployment.md`](docs/deployment.md)).
+	3. Configure automatic certificate renewal via Certbot hooks (script snippets provided in [`docs/deployment.md`](docs/deployment.md#certificate-automation)).
+	4. Enable observability via Prometheus exporter and OpenTelemetry traces as captured in [`docs/operations.md`](docs/integration-guide.md#observability-surface).
+
+	### SSH over Velocity
+
+	* `vshd` listens for Velocity connections and tunnels them into OpenSSH.
+	* `vsh-proxy` exposes a `ProxyCommand` trampoline for legacy SSH clients.
+	* Migration patterns, host key bridging, and audit log integration live in [`docs/velocity-ssh-migration.md`](docs/velocity-ssh-migration.md).
+
+	### Performance instrumentation
+
+	* Criterion benchmarks: `cargo bench -p velocity-bench` (instructions in [`docs/benchmarking.md`](docs/benchmarking.md)).
+	* AF_XDP fast-path harness for edge deployments: see [`docs/performance-security-roadmap.md`](docs/performance-security-roadmap.md#fast-path-engineering).
+	* Page-load comparison scripts under `benchmarks/page-load/` reproduce Velocity vs HTTP/3 metrics with reproducible CSV output.
+
+	## Repository tour
+
+	```text
+	├── adoption/                  # Partner enablement kits and pitch decks
+	├── bench/                     # Raw benchmark result storage (CSV + markdown summaries)
+	├── benchmarks/                # Harnesses for handshake microbenchmarks, AF_XDP PoC, browser automation
+	├── crates/
+	│   ├── velocity-core/        # Packet framing, congestion control, recovery logic
+	│   ├── velocity-crypto/      # Hybrid handshake, key schedule, AEAD plumbing
+	│   ├── velocity-server/      # HTTP adapters, static site runtime, reverse proxy
+	│   ├── velocity-client/      # Client SDK, CLI, cookie jar, ALPN management
+	│   ├── velocity-ssh-bridge/  # SSH transport adapter (vshd, vsh-proxy)
+	│   └── ...
+	├── docs/                     # Expanded documentation set (start with docs/index.md)
+	├── examples/                 # Static site, JSON API, browser gateway demos
+	├── native-bindings/          # C ABI glue and headers
+	├── spec/                     # Protocol draft + byte-level transcripts + formal notes
+	└── ...
+	```
+
+	## Staying up to date
+
+	1. Review [`ROADMAP.md`](ROADMAP.md) for cutover milestones (Prototype → Pilot → GA).
+	2. Subscribe to the Velocity changelog by watching releases on GitHub.
+	3. Join the weekly office hours by following the calendar link in [`docs/outreach.md`](docs/user-handbook.md#community-and-support).
+
+	## Contributing and support
+
+	* Contribution workflow, code-style, and review requirements: [`CONTRIBUTING.md`](CONTRIBUTING.md).
+	* Governance model, maintainer roles, and release cadence: [`GOVERNANCE.md`](GOVERNANCE.md).
+	* Disclosure channel and security triage playbook: [`SECURITY.md`](SECURITY.md).
+	* Velocity CA issuance policies and ACME extensions: [`docs/ca-operations.md`](docs/deployment.md#velocity-ca-operations).
+
+	## License
+
+	* Code — [MIT](LICENSE)
+	* Documentation & specifications — [CC-BY-4.0](LICENSE)
+
+	## Next steps
+
+	Head to [`docs/index.md`](docs/index.md) for a curated documentation map, including production deployment guides, benchmarking blueprints, and troubleshooting matrices. If you are piloting Velocity with partners, the `adoption/` directory includes pitch decks, risk assessments, and integration checklists to streamline reviews.
 	      message: "Hello from Velocity Edge"
 	  - path: /docs
 	    methods: [GET]

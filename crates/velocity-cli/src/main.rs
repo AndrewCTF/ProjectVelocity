@@ -1,7 +1,9 @@
 mod edge;
+mod simple_config;
 mod telemetry;
 
 use std::borrow::Cow;
+use std::env;
 use std::error::Error as StdError;
 use std::fmt::Write as FmtWrite;
 use std::fs;
@@ -15,6 +17,7 @@ use anyhow::{bail, ensure, Context, Result};
 use bytes::Bytes;
 use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 use edge::{load_edge_app, resolve_config_path};
+use simple_config::{load_combined_config, ConfigOverrides};
 use futures_util::{
     stream::{self, BoxStream},
     StreamExt,
@@ -804,7 +807,21 @@ fn init_tracing(verbosity: u8, format: LogFormat) {
     };
 }
 
-async fn run_serve(args: ServeArgs) -> Result<()> {
+async fn run_serve(mut args: ServeArgs) -> Result<()> {
+    let mut initial_router_config: Option<ServeConfig> = None;
+    let mut config_overrides: Option<ConfigOverrides> = None;
+
+    if let Some(config_path) = args.config.clone() {
+        let resolved = resolve_serve_config_path(&args.root, &config_path)?;
+        let combined = load_combined_config(&resolved).await?;
+        if let Some(overrides) = combined.overrides.clone() {
+            overrides.apply(&mut args);
+            config_overrides = Some(overrides);
+        }
+        initial_router_config = Some(combined.router);
+        args.config = Some(resolved);
+    }
+
     let ServeArgs {
         listen,
         alpn,
@@ -964,7 +981,11 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
     let mut router_watch_task: Option<JoinHandle<()>> = None;
     let router_handle = if let Some(config_path) = &config {
         let resolved = resolve_config_path(&root, config_path);
-        let serve_config = load_serve_config_file(&resolved).await?;
+        let serve_config = if let Some(config) = initial_router_config.take() {
+            config
+        } else {
+            load_combined_config(&resolved).await?.router
+        };
         let host_count = serve_config.hosts.len();
         let router = build_serve_router(serve_config, &root)?;
         info!(
@@ -974,7 +995,12 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
             "serve configuration loaded"
         );
         let (controller, handle) = ServeRouterController::new(router);
-        match spawn_router_watcher(resolved.clone(), root.clone(), controller) {
+        match spawn_router_watcher(
+            resolved.clone(),
+            root.clone(),
+            controller,
+            config_overrides.clone(),
+        ) {
             Ok(task_handle) => {
                 router_watch_task = Some(task_handle);
             }
@@ -1198,6 +1224,25 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
     Ok(())
 }
 
+fn resolve_serve_config_path(root: &Path, config: &Path) -> Result<PathBuf> {
+    if config.is_absolute() {
+        return Ok(config.to_path_buf());
+    }
+
+    let cwd = env::current_dir().context("failed to determine current working directory")?;
+    let candidate = cwd.join(config);
+    if candidate.exists() {
+        return Ok(candidate.canonicalize().unwrap_or(candidate));
+    }
+
+    let fallback = resolve_config_path(root, config);
+    if fallback.exists() {
+        Ok(fallback.canonicalize().unwrap_or(fallback))
+    } else {
+        Ok(fallback)
+    }
+}
+
 struct ResponseOutcome {
     response: Response,
     status: String,
@@ -1335,23 +1380,6 @@ async fn handle_directory(
     ))
 }
 
-async fn load_serve_config_file(path: &Path) -> Result<ServeConfig> {
-    let source = tokio::fs::read_to_string(path)
-        .await
-        .with_context(|| format!("failed to read serve config {}", path.display()))?;
-    let ext = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or_default();
-    if ext.eq_ignore_ascii_case("json") {
-        serde_json::from_str(&source)
-            .with_context(|| format!("serve config {} is not valid JSON", path.display()))
-    } else {
-        serde_yaml::from_str(&source)
-            .with_context(|| format!("serve config {} is not valid YAML", path.display()))
-    }
-}
-
 fn build_serve_router(config: ServeConfig, base_root: &Path) -> Result<Arc<ServeRouter>> {
     let router = ServeRouter::from_config(config, base_root)
         .map_err(|err| anyhow::anyhow!("failed to build serve router: {err}"))?;
@@ -1362,9 +1390,10 @@ fn spawn_router_watcher(
     path: PathBuf,
     base_root: PathBuf,
     controller: ServeRouterController,
+    overrides: Option<ConfigOverrides>,
 ) -> Result<JoinHandle<()>> {
     Ok(tokio::spawn(async move {
-        if let Err(err) = watch_router_config(path, base_root, controller).await {
+        if let Err(err) = watch_router_config(path, base_root, controller, overrides).await {
             warn!(target: "velocity::config", error = %err, "serve config watcher exited");
         }
     }))
@@ -1374,6 +1403,7 @@ async fn watch_router_config(
     path: PathBuf,
     base_root: PathBuf,
     controller: ServeRouterController,
+    overrides: Option<ConfigOverrides>,
 ) -> Result<()> {
     let (event_tx, mut event_rx) = mpsc::channel(16);
     let mut watcher = RecommendedWatcher::new(
@@ -1396,30 +1426,44 @@ async fn watch_router_config(
             Ok(event) => {
                 if should_reload(&event.kind) {
                     tokio::time::sleep(Duration::from_millis(50)).await;
-                    match load_serve_config_file(&path).await {
-                        Ok(config) => match build_serve_router(config, &base_root) {
-                            Ok(router) => {
-                                if let Err(err) = controller.update(router) {
+                    match load_combined_config(&path).await {
+                        Ok(bundle) => {
+                            if let (Some(expected), Some(current)) =
+                                (overrides.clone(), bundle.overrides.clone())
+                            {
+                                if current != expected {
                                     warn!(
                                         target: "velocity::config",
-                                        error = %err,
-                                        "failed to publish reloaded router"
-                                    );
-                                } else {
-                                    info!(
-                                        target: "velocity::config",
                                         file = %path.display(),
-                                        "serve configuration reloaded"
+                                        "serve config overrides changed; restart Velocity to apply"
                                     );
                                 }
                             }
-                            Err(err) => warn!(
-                                target: "velocity::config",
-                                error = %err,
-                                file = %path.display(),
-                                "serve router rebuild failed"
-                            ),
-                        },
+
+                            match build_serve_router(bundle.router, &base_root) {
+                                Ok(router) => {
+                                    if let Err(err) = controller.update(router) {
+                                        warn!(
+                                            target: "velocity::config",
+                                            error = %err,
+                                            "failed to publish reloaded router"
+                                        );
+                                    } else {
+                                        info!(
+                                            target: "velocity::config",
+                                            file = %path.display(),
+                                            "serve configuration reloaded"
+                                        );
+                                    }
+                                }
+                                Err(err) => warn!(
+                                    target: "velocity::config",
+                                    error = %err,
+                                    file = %path.display(),
+                                    "serve router rebuild failed"
+                                ),
+                            }
+                        }
                         Err(err) => warn!(
                             target: "velocity::config",
                             error = %err,

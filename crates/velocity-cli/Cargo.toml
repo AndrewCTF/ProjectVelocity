@@ -1,6 +1,6 @@
 [package]
 name = "velocity-cli"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "Velocity command-line interface for fast static site serving and deployment helpers"
 license = "MIT"

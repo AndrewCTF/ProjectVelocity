@@ -200,144 +200,74 @@ See [`docs/ca-operations.md`](./ca-operations.md) for ACME workflows, CSR format
 * [Appendix B: Ansible role snippet](./deployment.md#appendix-b-ansible)
 * [Appendix C: Edge runtime schema](./deployment.md#appendix-c-edge-runtime-schema)
 
+git clone https://github.com/projectvelocity/velocity.git
+cargo run -p velocity-cli --bin velocity -- serve --root public --self-signed --listen 0.0.0.0:4433
+git clone https://github.com/velocity-protocol/velocity.git
 Each appendix contains copy-paste ready infrastructure snippets maintained alongside integration tests.
 
-```pwsh
-# Inspect the handshake outcome and fallback advice
-cargo run -p pqq-client --example velocity-probe -- <host:port>
+### Appendix A — Terraform module sketch <a id="appendix-a-terraform"></a>
 
-# Fetch a resource. velocity-fetch auto-probes for the server ML-KEM key when
-# the operator embeds it in the handshake payload. Supply --kem-b64/--kem-file
-# only if the probe reports that no key was published.
-cargo run -p pqq-client --example velocity-fetch -- <host:port> https://example.com/
-
-# Optional overrides when the server key is published out-of-band
-cargo run -p pqq-client --example velocity-fetch -- <host:port> https://example.com/ \
-   --kem-b64 <base64-public-key>
-cargo run -p pqq-client --example velocity-fetch -- <host:port> https://example.com/ \
-   --kem-file path/to/server_kem_public.bin
+```hcl
+module "velocity_edge" {
+   source              = "./terraform/modules/velocity-edge"
+   name                = "velocity-prod"
+   region              = var.region
+   listen_udp_port     = 443
+   certificate_secret  = aws_secretsmanager_secret.velocity_cert.arn
+   ticket_secret_arn   = aws_kms_key.velocity_ticket.arn
+   instance_count      = 3
+   instance_type       = "c7g.large"
+   security_group_ids  = [aws_security_group.velocity.id]
+   enable_observability = true
+}
 ```
 
-Enable key publication on the server by passing `--publish-kem` to the CLI
-(`cargo run -p velocity-cli --bin velocity -- serve ... --publish-kem`) or by
-calling `ServerConfig::publish_kem_public(true)` when embedding the server in
-your own binary.
+### Appendix B — Ansible role snippet <a id="appendix-b-ansible"></a>
 
-If the server advertises fallback-only service, the fetch example prints the
-recommended ALPN/host/port so you can retry with `curl`, `wget`, or another
-HTTP client.
-
-### Drop-in application integration (`pqq-easy`)
-
-The `pqq-easy` crate exposes a high-level client that mirrors HTTPS ergonomics.
-By default it auto-discovers the ML-KEM key, caches it on disk, and falls back
-to HTTPS when the server requests downgrade:
-
-```rust
-use pqq_easy::EasyClientConfig;
-
-let config = EasyClientConfig::builder()
-   .server_addr("example.com:443")?
-   .hostname("example.com")
-   .build()?; // auto-discovers the Velocity ML-KEM key
-let client = pqq_easy::EasyClient::connect(config)?;
-let body = client.fetch_text("/status")?;
+```yaml
+- name: Deploy Velocity
+   hosts: velocity
+   become: true
+   roles:
+      - role: velocity
+         vars:
+            velocity_version: "latest"
+            velocity_listen: "0.0.0.0:4433"
+            velocity_cert_path: "/etc/velocity/certs/fullchain.pem"
+            velocity_key_path: "/etc/velocity/certs/privkey.pem"
+            velocity_config_template: "templates/serve.simple.yaml.j2"
+            velocity_metrics_listen: "127.0.0.1:9300"
 ```
 
-Disable discovery with `.server_key_autodiscover(false)` if your deployment
-requires a pre-pinned key (for example, environments without `--publish-kem`).
+### Appendix C — Edge runtime schema <a id="appendix-c-edge-runtime-schema"></a>
 
-## Platform support matrix
-
-Velocity components are written in Rust and build on the major x86_64 and aarch64 operating systems. The table below lists the routinely verified environments and the recommended bootstrap commands.
-
-| Platform | Status | Notes |
-| --- | --- | --- |
-| Debian 12 (Bookworm) | ✅ Supported | Use the `apt` bootstrap + systemd unit outlined below. |
-| Ubuntu 22.04 LTS / 24.04 LTS | ✅ Supported | Identical to the Debian workflow; includes sample `systemd` unit. |
-| Fedora 40 | ✅ Supported | Ensure `dnf install clang pkg-config` before building. |
-| macOS 14 (Apple Silicon & Intel) | ✅ Supported | Install via Homebrew, use launchd plist (sample coming soon). |
-| Windows 11 / Windows Server 2022 | ✅ Supported | Build with the `x86_64-pc-windows-msvc` toolchain via PowerShell.
-
-> **Target architectures:** x86_64 and aarch64 are first-class; armv7 testing is planned. For containerized deployments use the same steps inside the base image (e.g., Debian slim).
-
-### Debian & Ubuntu bootstrap
-
-```bash
-sudo apt update
-sudo apt install -y build-essential pkg-config libssl-dev clang cmake
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-source "$HOME/.cargo/env"
-
-# Clone and build Velocity
-git clone https://github.com/projectvelocity/velocity.git
-cd velocity
-cargo build --workspace --release
-
-# Run the CLI static server (self-signed certificate stored under ./public/.velocity/certs)
-cargo run -p velocity-cli --bin velocity -- serve --root public --self-signed --listen 0.0.0.0:4433
+```yaml
+templates_dir: templates
+middlewares:
+   - name: auth
+      kind: oidc
+      issuer: https://auth.example.com
+      client_id: velocity-edge
+rate_limit:
+   limit: 120
+   window: 1m
+routes:
+   - match:
+         path: /healthz
+         methods: [GET]
+      action:
+         type: static
+         status: 200
+         body: "ok"
+   - match:
+         path: /api
+      action:
+         type: proxy
+         upstream: http://127.0.0.1:4000
+         streaming: true
 ```
 
-For long-lived services on Debian/Ubuntu, install the sample `systemd` unit from `docs/systemd/velocity.service`:
-
-```bash
-sudo install -D docs/systemd/velocity.service /etc/systemd/system/velocity.service
-sudo systemctl daemon-reload
-sudo systemctl enable velocity
-sudo systemctl start velocity
-```
-
-The unit expects the workspace at `/opt/velocity` with a deployment bundle in `/opt/velocity/deploy`. Adjust `WorkingDirectory` and `ExecStart` to match your layout.
-
-### Fedora bootstrap
-
-```bash
-sudo dnf groupinstall -y "Development Tools"
-sudo dnf install -y clang pkg-config openssl-devel
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source "$HOME/.cargo/env"
-cargo build --workspace --release
-```
-
-### macOS bootstrap
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-brew install rustup
-rustup-init -y --default-toolchain stable
-source "$HOME/.cargo/env"
-
-# Optional: install launchd helper directory
-mkdir -p ~/Library/LaunchAgents
-cargo build --workspace --release
-```
-
-To run the static server with automatic certificate generation on macOS:
-
-```bash
-cargo run -p velocity-cli --bin velocity -- serve --root public --self-signed --listen 0.0.0.0:4433
-```
-
-### Windows bootstrap (PowerShell)
-
-```pwsh
-winget install --id Rustlang.Rustup --source winget
-rustup default stable
-git clone https://github.com/velocity-protocol/velocity.git
-Set-Location velocity
-cargo build --workspace --release
-
-# Start the static site server
-cargo run -p velocity-cli --bin velocity -- serve --root public --self-signed --listen 0.0.0.0:4433
-```
-
-For Windows services, wrap the CLI with `sc.exe create` or NSSM; a native Windows service host is on the roadmap.
-
-## Configuration knobs
-
-- `HandshakeConfig::with_supported_alpns` – advertise PQ-specific ALPNs.
-- `HandshakeConfig::with_fallback_endpoint` – specify downgrade target (`h3`).
-- `ServerConfig::from_cert_chain` – placeholder for hybrid certificate loading (future TLS integration).
+Use the schema alongside the simplified config to compose advanced behaviours without modifying Rust code.
 - `ClientConfig::with_alpns` – set client ALPN preference order.
 
 ## Fallback topology

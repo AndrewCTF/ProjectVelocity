@@ -1,43 +1,251 @@
 # Velocity User Handbook
 
-> Comprehensive, production-focused documentation for operators, developers, and security teams adopting the Velocity post-quantum transport stack. Use this handbook as the front door to the entire documentation set. It covers installation, upgrades, runtime configuration, CDN/edge features, troubleshooting, and where to get help.
+> Comprehensive guidance for deploying, operating, and troubleshooting Velocity/1. Start here if you are piloting the protocol, onboarding a team, or maintaining an existing deployment.
 
 ---
 
-## Table of Contents
+## Revision history
 
-1. [Audience & Scope](#audience--scope)
-2. [Architecture Overview](#architecture-overview)
-3. [Prerequisites & Environment Setup](#prerequisites--environment-setup)
-    1. [Supported Platforms](#supported-platforms)
-    2. [Toolchain Requirements](#toolchain-requirements)
-    3. [Networking & Firewall Considerations](#networking--firewall-considerations)
-4. [Download & Installation](#download--installation)
-    1. [Release Channels](#release-channels)
-    2. [Binary Downloads](#binary-downloads)
-    3. [Building From Source](#building-from-source)
-5. [Quickstart Workflows](#quickstart-workflows)
-    1. [Serve Static Content](#serve-static-content)
-    2. [Reverse Proxy an Existing App](#reverse-proxy-an-existing-app)
-    3. [Enable the Edge Runtime](#enable-the-edge-runtime)
-6. [Configuration Deep Dive](#configuration-deep-dive)
-    1. [CLI Flags & Environment Variables](#cli-flags--environment-variables)
-    2. [Edge Runtime `edge.yaml`](#edge-runtime-edgeyaml)
-    3. [Security Profiles & ALPN Fallback](#security-profiles--alpn-fallback)
-    4. [Rate Limiting & WAF Rules](#rate-limiting--waf-rules)
-    5. [Certificate & Key Management](#certificate--key-management)
-7. [Updating & Release Management](#updating--release-management)
-    1. [Versioning Policy](#versioning-policy)
-    2. [Upgrade Checklist](#upgrade-checklist)
-    3. [Automated Rollouts](#automated-rollouts)
-8. [Developer APIs & Integrations](#developer-apis--integrations)
-    1. [`velocity-edge` Builder DSL](#velocity-edge-builder-dsl)
-    2. [Direct Library Usage (`pqq-*` crates)](#direct-library-usage-pqq--crates)
-    3. [Embedding via C Bindings](#embedding-via-c-bindings)
-    4. [Framework Recipes (Next.js, FastAPI, Actix, etc.)](#framework-recipes-nextjs-fastapi-actix-etc)
-9. [Observability & Operations](#observability--operations)
-    1. [Logging & Tracing](#logging--tracing)
-    2. [Metrics & Dashboards](#metrics--dashboards)
+| Date | Version | Summary |
+|------|---------|---------|
+| 2025-10-06 | 1.0 | Rebuilt handbook aligned with simplified configuration, Velocity/1 spec refresh, and new operations surface. |
+
+## Table of contents
+
+1. [Audience and scope](#audience-and-scope)
+2. [Foundational concepts](#foundational-concepts)
+3. [Environment preparation](#environment-preparation)
+4. [Installation paths](#installation-paths)
+5. [Quickstart playbooks](#quickstart-playbooks)
+6. [Configuration reference](#configuration-reference)
+7. [Runtime operations](#runtime-operations)
+8. [Observability & incident response](#observability--incident-response)
+9. [Troubleshooting matrices](#troubleshooting-matrices)
+10. [Frequently asked questions](#frequently-asked-questions)
+11. [Support & escalation](#support--escalation)
+
+---
+
+## Audience and scope
+
+Velocity spans multiple personas:
+
+* **Platform and SRE teams** — responsible for standing up UDP 443, managing certificates, instrumenting telemetry.
+* **Application engineers** — integrate Velocity clients and endpoints into web apps, APIs, or microservices.
+* **Security teams** — evaluate cryptography, audit hybrid certificates, enforce downgrade policies.
+* **Network engineers** — configure load balancers, firewalls, and anycast front doors.
+
+This handbook assumes familiarity with Linux operations, container tooling, QUIC/TLS concepts, and YAML-based configuration. If you are exploring the protocol academically, start with [`spec/protocol-draft.md`](../spec/protocol-draft.md).
+
+## Foundational concepts
+
+1. **Velocity/1 handshake** — hybrid X25519 + Kyber, Dilithium-backed certificates, AEAD-protected streams. Review the flow diagram in [`spec/protocol-draft.md`](../spec/protocol-draft.md#6-handshake-flow).
+2. **Profiles** — `light` (Kyber512), `balanced` (Kyber768), `secure` (Kyber1024). Operators can pin defaults and per-host overrides.
+3. **Fallback** — Clients and servers gracefully negotiate down to HTTP/3 when Velocity unsupported. All downgrades are logged with reason codes.
+4. **Configuration layers** — Simplified YAML (`serve.simple.yaml`), advanced edge configuration (`edge.yaml` DSL), CLI flag overrides, and environment variables.
+5. **Telemetry** — Structured logs, Prometheus scrapes, optional OTLP traces.
+
+## Environment preparation
+
+### Supported platforms
+
+| OS | Status | Notes |
+|----|--------|-------|
+| Ubuntu 22.04 LTS | ✅ | Tested with systemd 249, kernel ≥5.15. Enable `net.core.rmem_max=33554432` for UDP buffers. |
+| Debian 12 | ✅ | Requires `libclang-dev` for PQ crates compiled with C backends. |
+| Fedora 40 | ✅ | Firewalld rules allow UDP/443 via `firewall-cmd --add-service=quic`. |
+| macOS 14+ | ✅ (dev) | Use `codesign` exemptions when running via Homebrew. No production support. |
+| Windows Server 2022 | 🧪 | Requires WSL2 or dedicated UDP proxy. Reference [`docs/deployment.md`](./deployment.md#windows) for details. |
+
+### Toolchain prerequisites
+
+* Rust ≥1.81 with `rustup component add clippy rustfmt`.
+* Optional: `llvm-tools-preview` for LTO builds.
+* PQ dependencies are vendored; enabling AVX2/NEON acceleration requires `RUSTFLAGS="-C target-cpu=native"`.
+* Container toolchain (Docker/Podman) for sandbox testing.
+
+### Network and firewall considerations
+
+* Open UDP port 443 end-to-end. Where middleboxes lack QUIC awareness, deploy UDP reverse proxies (HAProxy 2.8+, Nginx 1.25+).
+* Maintain HTTP/3 termination for fallback on TCP 443.
+* For anycast deployments, ensure Connection ID steering is available or use Velocity’s routing extension for state synchronization.
+
+## Installation paths
+
+1. **Prebuilt binaries** — Download from the GitHub Releases page. Verify signatures listed in [`SECURITY.md`](../SECURITY.md#release-signatures).
+2. **Cargo install** — `cargo install --locked --path crates/velocity-cli` for CLI-only deployments.
+3. **Docker Compose** — Use `docker/docker-compose.yaml` to run Velocity alongside HTTPS proxy and metrics pipeline. Customize environment variables documented in [`docs/docker-local.md`](./docker-local.md).
+4. **Source builds** — Clone the repository, run `cargo build --release --workspace`, and copy binaries from `target/release/`.
+
+## Quickstart playbooks
+
+### Serve static content
+
+1. Prepare directory `public/` with assets.
+2. Generate self-signed hybrid cert: `cargo run -p velocity-cli -- cert issue --dns localhost --out certs/localhost`.
+3. Create `serve.simple.yaml` as shown in the README quickstart.
+4. Start server: `cargo run -p velocity-cli -- serve --config serve.simple.yaml`.
+5. Fetch content: `cargo run -p velocity-cli -- client get https://localhost/ --insecure`.
+
+### Reverse proxy existing app
+
+1. Upstream app accessible at `http://127.0.0.1:3000`.
+2. Add proxy stanza to `serve.simple.yaml`:
+
+   ```yaml
+   content:
+     proxies:
+       - hostname: app.local
+         path: "/"
+         upstream: "http://127.0.0.1:3000"
+         preserve_host: true
+         timeouts:
+           connect: 5s
+           response: 35s
+           idle: 2m
+   ```
+
+3. Restart Velocity CLI (watcher reloads automatically when `serve.simple.yaml` changes).
+4. Access via `velocity-cli client get https://app.local/` or through a browser using the HTTPS front door detailed in [`docs/https-migration.md`](./https-migration.md).
+
+### Enable edge runtime extras
+
+* Add `edge.yaml` referencing rate limiting, templating, or middleware. Detailed schema in [`docs/deployment.md`](./deployment.md#edge-runtime-schema).
+* Start CLI with `--edge-config edge.yaml`. Live reload is supported when the config watcher is enabled.
+
+## Configuration reference
+
+### Layers and precedence
+
+1. **Simplified config (`serve.simple.yaml`)** — Primary interface. Supports `server`, `content`, `telemetry`, `profiles`, `tickets` blocks.
+2. **CLI overrides** — Flags such as `--listen`, `--proxy`, `--metrics-listen` override file values on startup.
+3. **Environment variables** — Prefix `VELOCITY_` for container deployments (e.g., `VELOCITY_LISTEN=0.0.0.0:4433`).
+4. **Edge config** — Optional DSL enabling advanced routing, templating, auth hooks.
+
+### Core keys (`server` block)
+
+| Key | Description |
+|-----|-------------|
+| `listen` | UDP socket (and optional TCP fallback) to bind. e.g., `0.0.0.0:4433`. |
+| `tls.certificate` / `tls.private_key` | Paths to PEM files. Hybrid certificates must include PQ extension. |
+| `tls.require_ech` | Boolean gating Encrypted Client Hello. Clients lacking ECH are rejected when true. |
+| `profiles.default` | Default profile enforced when clients have no preference. |
+| `profiles.permit` | Allowed profiles list. |
+| `tickets.max_age` | Duration for session tickets. |
+
+### Content section
+
+* `sites` — Static roots keyed by hostname. Each entry supports `root`, `index`, `listings`, `cache_control`.
+* `proxies` — Reverse proxy declarations with timeout map, retry policy, header rewrites.
+* `routes` — Fine-grained routing with method filters, static responses, JSON templates.
+
+### Telemetry section
+
+* `metrics_listen` — Prometheus endpoint (set to `null` to disable).
+* `structured_logs` — Emit JSON logs with correlation IDs, downgrade reasons.
+* `otlp` — Optional OTLP/HTTP exporter configuration.
+
+### Config watcher
+
+Velocity CLI watches both `serve.simple.yaml` and the derived expanded config. When a change is detected:
+
+1. It re-parses the simplified file.
+2. Computes effective overrides and warns if CLI flags conflict.
+3. Hot-swaps the router atomically, keeping open connections alive.
+
+See [`docs/integration-guide.md`](./integration-guide.md#config-watchers) for architecture details.
+
+## Runtime operations
+
+### Managing the service
+
+* Systemd deployments use the unit in [`docs/systemd-service.md`](./systemd-service.md). Key features: sandboxing, restart limits, exec watchdog.
+* Container deployments rely on health checks; configure `HEALTHCHECK CMD velocity-cli health` for Compose/Kubernetes.
+* Rolling restart procedure:
+  1. Drain traffic using `velocity-cli admin quiesce`.
+  2. Wait for in-flight streams to finish or forcibly close with `velocity-cli admin abort --age 2m`.
+  3. Restart service and re-enable traffic via `velocity-cli admin resume`.
+
+### Session ticket rotation
+
+* Rotate ticket keys at least every 24 hours. Use `velocity-cli tickets rotate` to generate new keys and push to running instances via the admin API.
+* Back up ticket secrets in an HSM or secret manager; losing them invalidates resumption.
+
+### Certificate management
+
+* Velocity CLI integrates with Certbot via hooks described in [`docs/deployment.md`](./deployment.md#certificate-automation).
+* Production deployments SHOULD use hybrid certificates signed by the Velocity CA or another PQ-capable CA.
+
+## Observability & incident response
+
+### Metrics
+
+Prometheus exporter exposes metrics under `/metrics`:
+
+| Metric | Description |
+|--------|-------------|
+| `velocity_handshake_duration_seconds` | Histogram of handshake latency per profile. |
+| `velocity_downgrade_events_total` | Counter labelled by reason (`no_hybrid_cert`, `policy_disabled`, `client_profile`). |
+| `velocity_pq_validation_failures_total` | PQ signature verification failures. |
+| `velocity_0rtt_replay_rejections_total` | Replayed 0-RTT attempts blocked. |
+
+Dashboards: import the Grafana JSON in `docs/assets/grafana/velocity.json`.
+
+### Logging
+
+* Structured logs (JSON) include fields: `timestamp`, `connection_id`, `event`, `profile`, `alpn`, `reason`, `latency_ms`.
+* Pipe logs to Loki or Elasticsearch. Suggested retention: 14 days for handshake events, 90 days for security incidents.
+
+### Alerting
+
+* Alert on downgrade rate >5% over 5 minutes.
+* Alert on PQ validation failures >0.1% of handshakes.
+* Alert on handshake p95 >2× baseline.
+
+### Incident response
+
+1. Triage anomaly using `velocity-cli admin diagnostics --dump`.
+2. Capture metrics snapshot and logs around the timeframe.
+3. If cryptographic verification fails, revoke affected certificates and rotate ticket keys immediately.
+4. Report security issues following [`SECURITY.md`](../SECURITY.md#reporting-security-issues).
+
+## Troubleshooting matrices
+
+| Symptom | Likely causes | Resolution |
+|---------|---------------|------------|
+| Client sees `CERT_PQ_VALIDATION_FAILED` | PQ signature missing, clock skew, corrupted cert chain | Check certificate extension, ensure Dilithium signature present, verify system clocks via NTP. |
+| Frequent downgrades to HTTP/3 | Hybrid cert disabled, policy denies profile, client lacks Velocity support | Inspect telemetry `downgrade_reason`, confirm `permit` list includes requested profile, ensure clients present `velocity/1` in ALPN. |
+| 0-RTT rejected | Ticket expired, replay window exceeded, policy denies method | Check ticket expiry in logs, reduce early data volume, allow idempotent methods only. |
+| UDP port unreachable | Firewall blocks UDP/443, load balancer lacks QUIC support | Update security groups, configure QUIC listener, or deploy UDP proxy. |
+| Config reload ignored | Syntax error, CLI override pinned value | Check CLI stderr for warnings, validate YAML with `velocity-cli config lint`. |
+
+> **Tip:** Append `--log-format text` during debugging to stream human-friendly logs.
+
+## Frequently asked questions
+
+### Can I run Velocity behind Cloudflare or CDNs?
+
+Yes. Terminate Velocity at the edge you control, then use HTTP/3 or HTTP/2 between the CDN and your origin. When the CDN supports custom UDP services, tunnel Velocity directly and let the CDN handle DDoS mitigation.
+
+### How do I restrict clients to the secure profile?
+
+Set `profiles.default: secure` and `profiles.permit: [secure]` in the simplified config. Clients requesting `light` or `balanced` will be downgraded with explicit `PROFILE_POLICY_VIOLATION` logs.
+
+### Does Velocity support mutual authentication?
+
+Yes. Configure client certificates via `tls.client_auth` referencing Velocity CA roots. Clients present hybrid certificates; the server validates PQ + classical signatures and enforces policy.
+
+### What happens if Kyber is broken in the future?
+
+Velocity’s hybrid construction preserves confidentiality relying on either X25519 or Kyber. Should Kyber become vulnerable, rotate to a new profile once published (Velocity/2) and revoke affected tickets. The roadmap documents emergency response timelines.
+
+## Support & escalation
+
+* **Community:** Join the weekly office hours (calendar link in `docs/outreach.md`).
+* **Enterprise pilots:** Email `pilot@velocity.dev` with deployment details.
+* **Security:** Follow the PGP key and triage process in [`SECURITY.md`](../SECURITY.md).
+
+Maintaining precise, auditable documentation is a core Velocity requirement. Submit feedback through GitHub issues tagged `docs` or `operations` so we can keep this handbook aligned with the codebase.
     3. [Health Checks & Synthetic Probes](#health-checks--synthetic-probes)
 10. [Security Hardening & Compliance](#security-hardening--compliance)
     1. [Transport Security Controls](#transport-security-controls)

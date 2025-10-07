@@ -319,12 +319,9 @@ mod tests {
 
         let mut sender = FrameSequencer::new(0, 0);
         let mut receiver = FrameSequencer::new(0, 0);
-        let frames = encode_chunked_payload_with_limit(
-            &mut sender,
-            &oversized,
-            APPLICATION_MESSAGE_MAX,
-        )
-        .expect("encode with extended limit");
+        let frames =
+            encode_chunked_payload_with_limit(&mut sender, &oversized, APPLICATION_MESSAGE_MAX)
+                .expect("encode with extended limit");
         assert!(frames.len() >= 2);
 
         let mut assembler = ChunkAssembler::new(APPLICATION_MESSAGE_MAX);

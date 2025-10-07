@@ -11,11 +11,11 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use futures_util::{stream::BoxStream, StreamExt};
 use pqq_core::{
-    cbor_from_slice, cbor_to_vec, encode_chunked_payload, encode_handshake_response,
-    AlpnResolution, CborError, ChunkAssembler, FallbackDirective, FrameError, FrameSequencer,
-    HandshakeConfig, HandshakeDriver, HandshakeError, HandshakeResponse, InMemoryReplayGuard,
-    ReplayGuard, StrictTransportDirective, FRAME_HEADER_LEN, FRAME_MAX_PAYLOAD,
-    HANDSHAKE_MESSAGE_MAX,
+    cbor_from_slice, cbor_to_vec, encode_chunked_payload, encode_chunked_payload_with_limit,
+    encode_handshake_response, AlpnResolution, CborError, ChunkAssembler, FallbackDirective,
+    FrameError, FrameSequencer, HandshakeConfig, HandshakeDriver, HandshakeError,
+    HandshakeResponse, InMemoryReplayGuard, ReplayGuard, StrictTransportDirective,
+    APPLICATION_MESSAGE_MAX, FRAME_HEADER_LEN, FRAME_MAX_PAYLOAD, HANDSHAKE_MESSAGE_MAX,
 };
 pub use pqq_tls::SecurityProfile;
 use pqq_tls::{
@@ -823,6 +823,7 @@ pub struct ServerSession {
     router: DatagramRouterHandle,
     inbox: Option<Mutex<mpsc::Receiver<Vec<u8>>>>,
     framing: Option<Arc<Mutex<FrameSequencer>>>,
+    assembler: Option<Arc<Mutex<ChunkAssembler>>>,
 }
 
 impl ServerSession {
@@ -844,6 +845,11 @@ impl ServerSession {
             framing,
         } = combined;
 
+        let framing = framing.map(|seq| Arc::new(Mutex::new(seq)));
+        let assembler = framing
+            .as_ref()
+            .map(|_| Arc::new(Mutex::new(ChunkAssembler::new(APPLICATION_MESSAGE_MAX))));
+
         Self {
             socket,
             peer,
@@ -856,7 +862,8 @@ impl ServerSession {
             early_data: Mutex::new(early_data),
             router,
             inbox,
-            framing: framing.map(|seq| Arc::new(Mutex::new(seq))),
+            framing,
+            assembler,
         }
     }
 
@@ -911,32 +918,40 @@ impl ServerSession {
 
         let inbox = self.inbox.as_ref().ok_or(ServerError::MissingCrypto)?;
         let mut inbox = inbox.lock().await;
-        let buf = match inbox.recv().await {
-            Some(buf) => buf,
-            None => return Err(ServerError::PeerClosed),
-        };
+        let framing = self.framing.as_ref().ok_or(ServerError::MissingFraming)?;
+        let assembler = self.assembler.as_ref().ok_or(ServerError::MissingFraming)?;
 
-        let ciphertext = {
-            let framing = self.framing.as_ref().ok_or(ServerError::MissingFraming)?;
-            let mut framing = framing.lock().await;
-            let frame = framing.decode(&buf).map_err(ServerError::Framing)?;
-            frame.payload.to_vec()
-        };
+        loop {
+            let buf = match inbox.recv().await {
+                Some(buf) => buf,
+                None => return Err(ServerError::PeerClosed),
+            };
 
-        let plaintext = match &self.crypto {
-            Some(crypto) => {
-                let mut guard = crypto.lock().await;
-                guard.open(&ciphertext).map_err(ServerError::Crypto)?
+            let slice = {
+                let mut framing = framing.lock().await;
+                framing.decode(&buf).map_err(ServerError::Framing)?
+            };
+
+            if let Some(ciphertext) = {
+                let mut assembler = assembler.lock().await;
+                assembler.push_slice(slice).map_err(ServerError::Framing)?
+            } {
+                let plaintext = match &self.crypto {
+                    Some(crypto) => {
+                        let mut guard = crypto.lock().await;
+                        guard.open(&ciphertext).map_err(ServerError::Crypto)?
+                    }
+                    None => return Err(ServerError::MissingCrypto),
+                };
+
+                return Ok(Request {
+                    peer: self.peer,
+                    payload: plaintext,
+                    handshake: self.handshake.clone(),
+                    early: false,
+                });
             }
-            None => return Err(ServerError::MissingCrypto),
-        };
-
-        Ok(Request {
-            peer: self.peer,
-            payload: plaintext,
-            handshake: self.handshake.clone(),
-            early: false,
-        })
+        }
     }
 
     /// Send a response payload back to the peer.
@@ -983,19 +998,22 @@ impl ServerSession {
             }
             None => return Err(ServerError::MissingCrypto),
         };
-        let framed = {
+        let frames = {
             let framing = self.framing.as_ref().ok_or(ServerError::MissingFraming)?;
             let mut framing = framing.lock().await;
-            let framed = framing.encode(&ciphertext).map_err(ServerError::Framing)?;
+            encode_chunked_payload_with_limit(&mut framing, &ciphertext, APPLICATION_MESSAGE_MAX)
+                .map_err(ServerError::Framing)?
+        };
+
+        for frame in frames {
             tracing::debug!(
                 target = "velocity::server::session",
                 peer = %self.peer,
-                framed_len = framed.len(),
-                "framed ciphertext length"
+                framed_len = frame.len(),
+                "sending framed ciphertext"
             );
-            framed
-        };
-        self.socket.send_to(&framed, self.peer).await?;
+            self.socket.send_to(&frame, self.peer).await?;
+        }
         Ok(())
     }
 }

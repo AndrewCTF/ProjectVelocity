@@ -406,12 +406,8 @@ impl ClientSession {
         };
         let frames = {
             let mut framing = self.framing.lock().await;
-            encode_chunked_payload_with_limit(
-                &mut *framing,
-                &ciphertext,
-                APPLICATION_MESSAGE_MAX,
-            )
-            .map_err(ClientError::Framing)?
+            encode_chunked_payload_with_limit(&mut framing, &ciphertext, APPLICATION_MESSAGE_MAX)
+                .map_err(ClientError::Framing)?
         };
 
         for frame in frames {
@@ -432,16 +428,12 @@ impl ClientSession {
             let len = self.socket.recv(&mut buf).await?;
             let slice = {
                 let mut framing = self.framing.lock().await;
-                framing
-                    .decode(&buf[..len])
-                    .map_err(ClientError::Framing)?
+                framing.decode(&buf[..len]).map_err(ClientError::Framing)?
             };
 
             if let Some(ciphertext) = {
                 let mut assembler = self.assembler.lock().await;
-                assembler
-                    .push_slice(slice)
-                    .map_err(ClientError::Framing)?
+                assembler.push_slice(slice).map_err(ClientError::Framing)?
             } {
                 let plaintext = {
                     let mut crypto = self.crypto.lock().await;

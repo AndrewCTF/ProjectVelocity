@@ -15,8 +15,9 @@ pub mod transport;
 pub use cbor::{from_slice as cbor_from_slice, to_vec as cbor_to_vec, Error as CborError};
 pub use entropy::LavaRand;
 pub use frame::{
-    decode_frame, encode_chunked_payload, encode_frame, ChunkAssembler, FrameError, FrameSequencer,
-    FrameSlice, FRAME_HEADER_LEN, FRAME_MAX_PAYLOAD, HANDSHAKE_MESSAGE_MAX,
+    decode_frame, encode_chunked_payload, encode_chunked_payload_with_limit, encode_frame,
+    ChunkAssembler, FrameError, FrameSequencer, FrameSlice, APPLICATION_MESSAGE_MAX,
+    FRAME_HEADER_LEN, FRAME_MAX_PAYLOAD, HANDSHAKE_MESSAGE_MAX,
 };
 pub use link::{
     memory_link_pair, ChannelEndpoint, LinkEndpoint, LinkError, LinkHandle, LinkHandshakeDriver,

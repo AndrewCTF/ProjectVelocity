@@ -9,9 +9,10 @@ mod kem;
 pub use kem::{extract_kem_public, parse_kem_payload};
 use pqq_core::{
     build_initial_packet, cbor_from_slice, cbor_to_vec, decode_handshake_response,
-    encode_chunked_payload, AlpnResolution, CborError, ChunkAssembler, FallbackDirective,
-    FrameError, FrameSequencer, HandshakeConfig, HandshakeResponse, FRAME_HEADER_LEN,
-    FRAME_MAX_PAYLOAD, HANDSHAKE_MESSAGE_MAX,
+    encode_chunked_payload, encode_chunked_payload_with_limit, AlpnResolution, CborError,
+    ChunkAssembler, FallbackDirective, FrameError, FrameSequencer, HandshakeConfig,
+    HandshakeResponse, APPLICATION_MESSAGE_MAX, FRAME_HEADER_LEN, FRAME_MAX_PAYLOAD,
+    HANDSHAKE_MESSAGE_MAX,
 };
 pub use pqq_tls::SecurityProfile;
 use pqq_tls::{
@@ -173,6 +174,7 @@ impl Client {
                         response,
                         artifacts.crypto,
                         artifacts.framing,
+                        ChunkAssembler::new(APPLICATION_MESSAGE_MAX),
                     ),
                     resumption_accepted: artifacts.resumption_accepted,
                     early_data: artifacts.early_data_attempted,
@@ -365,6 +367,7 @@ pub struct ClientSession {
     handshake_response: HandshakeResponse,
     crypto: Arc<Mutex<SessionCrypto>>,
     framing: Arc<Mutex<FrameSequencer>>,
+    assembler: Arc<Mutex<ChunkAssembler>>,
 }
 
 impl ClientSession {
@@ -373,12 +376,14 @@ impl ClientSession {
         handshake_response: HandshakeResponse,
         crypto: SessionCrypto,
         framing: FrameSequencer,
+        assembler: ChunkAssembler,
     ) -> Self {
         Self {
             socket,
             handshake_response,
             crypto: Arc::new(Mutex::new(crypto)),
             framing: Arc::new(Mutex::new(framing)),
+            assembler: Arc::new(Mutex::new(assembler)),
         }
     }
 
@@ -399,11 +404,19 @@ impl ClientSession {
             let mut crypto = self.crypto.lock().await;
             crypto.seal(payload).map_err(ClientError::Crypto)?
         };
-        let framed = {
+        let frames = {
             let mut framing = self.framing.lock().await;
-            framing.encode(&ciphertext).map_err(ClientError::Framing)?
+            encode_chunked_payload_with_limit(
+                &mut *framing,
+                &ciphertext,
+                APPLICATION_MESSAGE_MAX,
+            )
+            .map_err(ClientError::Framing)?
         };
-        self.socket.send(&framed).await?;
+
+        for frame in frames {
+            self.socket.send(&frame).await?;
+        }
 
         self.receive_response().await
     }
@@ -414,21 +427,29 @@ impl ClientSession {
     }
 
     pub async fn receive_response(&self) -> Result<Vec<u8>, ClientError> {
-        let mut buf = vec![0u8; 4096];
-        let len = self.socket.recv(&mut buf).await?;
-        buf.truncate(len);
+        let mut buf = vec![0u8; HANDSHAKE_FRAME_CAPACITY];
+        loop {
+            let len = self.socket.recv(&mut buf).await?;
+            let slice = {
+                let mut framing = self.framing.lock().await;
+                framing
+                    .decode(&buf[..len])
+                    .map_err(ClientError::Framing)?
+            };
 
-        let payload = {
-            let mut framing = self.framing.lock().await;
-            let slice = framing.decode(&buf).map_err(ClientError::Framing)?;
-            slice.payload.to_vec()
-        };
-
-        let plaintext = {
-            let mut crypto = self.crypto.lock().await;
-            crypto.open(&payload).map_err(ClientError::Crypto)?
-        };
-        Ok(plaintext)
+            if let Some(ciphertext) = {
+                let mut assembler = self.assembler.lock().await;
+                assembler
+                    .push_slice(slice)
+                    .map_err(ClientError::Framing)?
+            } {
+                let plaintext = {
+                    let mut crypto = self.crypto.lock().await;
+                    crypto.open(&ciphertext).map_err(ClientError::Crypto)?
+                };
+                return Ok(plaintext);
+            }
+        }
     }
 
     pub async fn receive_response_string(&self) -> Result<String, ClientError> {

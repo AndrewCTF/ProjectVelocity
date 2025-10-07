@@ -11,6 +11,11 @@ pub const FRAME_MAX_PAYLOAD: usize = 1350;
 /// multiple frames via the chunking helpers below.
 pub const HANDSHAKE_MESSAGE_MAX: usize = 16 * 1024;
 
+/// Maximum size for an application data message that can be fragmented across
+/// multiple Velocity frames. This keeps memory usage bounded while still
+/// allowing multi-megabyte responses to traverse the transport.
+pub const APPLICATION_MESSAGE_MAX: usize = 4 * 1024 * 1024;
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum FrameError {
     #[error("frame too short")]
@@ -62,7 +67,18 @@ pub fn encode_chunked_payload(
     sequencer: &mut FrameSequencer,
     payload: &[u8],
 ) -> Result<Vec<Vec<u8>>, FrameError> {
-    if payload.len() > HANDSHAKE_MESSAGE_MAX {
+    encode_chunked_payload_with_limit(sequencer, payload, HANDSHAKE_MESSAGE_MAX)
+}
+
+/// Variant of [`encode_chunked_payload`] that allows the caller to specify a
+/// custom maximum payload length. This is useful for application data, which
+/// routinely exceeds the stricter handshake limits.
+pub fn encode_chunked_payload_with_limit(
+    sequencer: &mut FrameSequencer,
+    payload: &[u8],
+    max_len: usize,
+) -> Result<Vec<Vec<u8>>, FrameError> {
+    if payload.len() > max_len {
         return Err(FrameError::PayloadTooLarge);
     }
 
@@ -292,5 +308,34 @@ mod tests {
         }
 
         assert_eq!(reconstructed.expect("reconstructed"), payload);
+    }
+
+    #[test]
+    fn chunking_with_extended_limit_handles_large_payload() {
+        let mut small_limit = FrameSequencer::new(0, 0);
+        let oversized = vec![0xAAu8; HANDSHAKE_MESSAGE_MAX + 1];
+        let err = encode_chunked_payload(&mut small_limit, &oversized).unwrap_err();
+        assert_eq!(err, FrameError::PayloadTooLarge);
+
+        let mut sender = FrameSequencer::new(0, 0);
+        let mut receiver = FrameSequencer::new(0, 0);
+        let frames = encode_chunked_payload_with_limit(
+            &mut sender,
+            &oversized,
+            APPLICATION_MESSAGE_MAX,
+        )
+        .expect("encode with extended limit");
+        assert!(frames.len() >= 2);
+
+        let mut assembler = ChunkAssembler::new(APPLICATION_MESSAGE_MAX);
+        let mut reconstructed = None;
+        for frame in frames {
+            let slice = receiver.decode(&frame).expect("decode frame");
+            if let Some(done) = assembler.push_slice(slice).expect("assemble") {
+                reconstructed = Some(done);
+            }
+        }
+
+        assert_eq!(reconstructed.expect("reconstructed"), oversized);
     }
 }

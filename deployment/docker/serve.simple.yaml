@@ -1,0 +1,20 @@
+server:
+  listen: "0.0.0.0:4433"
+  log_level: debug
+  tls:
+    certificate: "/etc/velocity/certs/fullchain.pem"
+    private_key: "/etc/velocity/certs/privkey.pem"
+    # Publish the server's PQ KEM public parameters (e.g., Kyber) so clients can perform hybrid key exchange
+    publish_kem: true
+  profiles:
+    default: balanced
+content:
+  sites:
+    - hostname: localhost
+      root: "/srv/www"
+      cache_control: "public, max-age=60"
+      # Advertise an HTTP/3/TLS fallback so clients that can't complete the PQ handshake can downgrade
+      fallback_endpoint: "https://127.0.0.1:8443"
+telemetry:
+  metrics_listen: "127.0.0.1:9300"
+  structured_logs: true

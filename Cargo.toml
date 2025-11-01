@@ -15,6 +15,7 @@ members = [
     "examples/json-api",
     "examples/browser-gateway",
     "examples/handshake-transcript-dump",
-    "benchmarks/handshake-bench"
+    "benchmarks/handshake-bench",
+    "tools/udp-mitm",
 ]
 resolver = "2"

@@ -335,4 +335,93 @@ mod tests {
 
         assert_eq!(reconstructed.expect("reconstructed"), oversized);
     }
+
+    #[test]
+    fn malformed_frame_no_panic_and_expected_errors() {
+        // deterministic LCG for pseudo-random bytes (test reproducible)
+        let mut seed: u64 = 0xDEADBEEFCAFEBABE;
+        fn lcg_next(s: &mut u64) -> u8 {
+            // simple LCG: x = x * 6364136223846793005 + 1
+            *s = s.wrapping_mul(6364136223846793005u64).wrapping_add(1);
+            (*s >> 32) as u8
+        }
+
+        // Try a variety of random-length buffers and ensure decode_frame never panics
+        for len in 0..256usize {
+            let mut buf = Vec::with_capacity(len);
+            for _ in 0..len {
+                buf.push(lcg_next(&mut seed));
+            }
+
+            // decode_frame should return Result, not panic. Use catch_unwind to be extra safe.
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decode_frame(&buf)));
+            assert!(res.is_ok(), "decode_frame panicked on random buffer length={}", len);
+        }
+
+        // Craft specific malformed frames to validate error kinds
+        // 1) Too short header
+        let short = vec![0u8; FRAME_HEADER_LEN - 1];
+        assert_eq!(decode_frame(&short).unwrap_err(), FrameError::TooShort);
+
+        // 2) Declared length larger than actual -> LengthMismatch
+        let mut good = encode_frame(7, b"hello").expect("encode");
+        // corrupt length field to claim 100 bytes
+        let claimed: u32 = 100;
+        good[8..12].copy_from_slice(&claimed.to_be_bytes());
+        assert_eq!(decode_frame(&good).unwrap_err(), FrameError::LengthMismatch);
+
+        // 3) Declared length exceeds FRAME_MAX_PAYLOAD -> PayloadTooLarge
+        let mut big = encode_frame(9, &vec![0u8; FRAME_MAX_PAYLOAD]).expect("encode big");
+        let huge: u32 = (FRAME_MAX_PAYLOAD as u32) + 1;
+        big[8..12].copy_from_slice(&huge.to_be_bytes());
+        assert_eq!(decode_frame(&big).unwrap_err(), FrameError::PayloadTooLarge);
+
+        // 4) Feed random payloads into ChunkAssembler and ensure no panic and correct errors
+        let mut assembler = ChunkAssembler::new(HANDSHAKE_MESSAGE_MAX);
+        // push a few random payload slices
+        for _ in 0..128 {
+            let mut payload = Vec::with_capacity(64);
+            for _ in 0..(lcg_next(&mut seed) as usize % 64) {
+                payload.push(lcg_next(&mut seed));
+            }
+            // Create a fake FrameSlice view (packet_number irrelevant for assembler)
+            let slice = FrameSlice { packet_number: 0, payload: &payload };
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| assembler.push_slice(slice)));
+            assert!(res.is_ok(), "ChunkAssembler panicked on random payload");
+        }
+    }
+
+    #[test]
+    fn tampering_shows_transport_layer_limits() {
+        // The framing layer only provides sequencing and length checks. If an on-path
+        // attacker flips payload bytes but keeps the header length correct, the frame
+        // decoder will happily return the modified payload. This test documents that
+        // expectation so reviewers don't assume the frame layer provides integrity.
+        let mut seq = FrameSequencer::new(10, 10);
+        let payload = b"sensitive data";
+        let mut frame = seq.encode(payload).expect("encode");
+
+        // flip some payload bytes but preserve total length
+        if frame.len() > FRAME_HEADER_LEN + 2 {
+            let idx = FRAME_HEADER_LEN + 1;
+            frame[idx] ^= 0xFF;
+        }
+
+        // decode_frame will not detect content tampering; it only checks header/length
+        let decoded = decode_frame(&frame).expect("decode after tamper");
+        assert_eq!(decoded.len(), payload.len());
+
+        // The sequencer.decode enforces ordering (packet number). Out-of-order frames
+        // should be rejected.
+        let mut recv = FrameSequencer::new(0, 0);
+        let good = recv.encode(b"a").expect("encode a");
+        let bad = recv.encode(b"b").expect("encode b");
+        // craft an out-of-order scenario by attempting to decode 'bad' before 'good'
+        let mut other = FrameSequencer::new(0, 0);
+        let err = other.decode(&bad).unwrap_err();
+        assert!(matches!(err, FrameError::OutOfOrder { .. }));
+        // now decode the correct first frame and then the second
+        other.decode(&good).expect("decode good after out-of-order");
+        other.decode(&bad).expect("decode bad in order now");
+    }
 }

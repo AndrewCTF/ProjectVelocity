@@ -716,7 +716,8 @@ pub unsafe extern "C" fn pqq_start_server(config_json: *const c_char) -> i32 {
 
         let runtime = &global_state().runtime;
         let handler = Arc::new(NativeHandler::new());
-        let mut handshake_cfg = HandshakeConfig::default().with_supported_alpns(config.alpns.clone());
+        let mut handshake_cfg =
+            HandshakeConfig::default().with_supported_alpns(config.alpns.clone());
         if let Some(fallback) = &config.fallback {
             handshake_cfg = handshake_cfg.with_fallback_endpoint(
                 fallback.alpn.clone(),

@@ -13,35 +13,35 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{Context, Result, bail, ensure};
 use bytes::Bytes;
 use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 use edge::{load_edge_app, resolve_config_path};
 use futures_util::{
-    stream::{self, BoxStream},
     StreamExt,
+    stream::{self, BoxStream},
 };
 use html_escape::{encode_double_quoted_attribute, encode_text};
 use http::StatusCode;
 use mime_guess::Mime;
 use notify::{
-    event::ModifyKind, Config as NotifyConfig, EventKind, RecommendedWatcher, RecursiveMode,
-    Watcher,
+    Config as NotifyConfig, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+    event::ModifyKind,
 };
 use percent_encoding::percent_decode_str;
 use pqq_server::{
     Request, Response, ResponseStreamError, SecurityProfile, Server, ServerConfig, ServerError,
 };
-use rcgen::{generate_simple_self_signed, CertifiedKey};
+use rcgen::{CertifiedKey, generate_simple_self_signed};
 use reqwest::{
+    Client, Method, Url,
     header::{
-        HeaderMap, HeaderName, HeaderValue, CONNECTION, CONTENT_LENGTH, HOST, TRANSFER_ENCODING,
+        CONNECTION, CONTENT_LENGTH, HOST, HeaderMap, HeaderName, HeaderValue, TRANSFER_ENCODING,
         UPGRADE,
     },
-    Client, Method, Url,
 };
 use serde::Serialize;
-use simple_config::{load_combined_config, ConfigOverrides};
+use simple_config::{ConfigOverrides, load_combined_config};
 use thiserror::Error;
 use tokio::signal;
 use tokio::sync::mpsc;
@@ -374,21 +374,15 @@ impl ReverseProxy {
                     ),
                     ProxyError::Timeout(_) => (
                         StatusCode::GATEWAY_TIMEOUT,
-                        Cow::Borrowed(
-                            "Upstream origin timed out while processing the request.",
-                        ),
+                        Cow::Borrowed("Upstream origin timed out while processing the request."),
                     ),
                     ProxyError::Tls { message, .. } => (
                         StatusCode::BAD_GATEWAY,
-                        Cow::Owned(format!(
-                            "TLS handshake with upstream failed: {message}"
-                        )),
+                        Cow::Owned(format!("TLS handshake with upstream failed: {message}")),
                     ),
                     ProxyError::Connect(_) => (
                         StatusCode::BAD_GATEWAY,
-                        Cow::Borrowed(
-                            "Unable to establish a connection to the upstream origin.",
-                        ),
+                        Cow::Borrowed("Unable to establish a connection to the upstream origin."),
                     ),
                     ProxyError::Upstream(_) => (
                         StatusCode::BAD_GATEWAY,
@@ -1512,7 +1506,9 @@ async fn render_directory_listing(dir: &Path) -> Result<String, SiteError> {
 
     items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
-    let mut body = String::from("<html><head><title>Directory listing</title><style>body{font-family:system-ui;margin:2rem;}table{width:100%;border-collapse:collapse;}th,td{padding:0.5rem;text-align:left;border-bottom:1px solid #ddd;}th{background:#f5f5f5;}</style></head><body>");
+    let mut body = String::from(
+        "<html><head><title>Directory listing</title><style>body{font-family:system-ui;margin:2rem;}table{width:100%;border-collapse:collapse;}th,td{padding:0.5rem;text-align:left;border-bottom:1px solid #ddd;}th{background:#f5f5f5;}</style></head><body>",
+    );
     body.push_str("<h1>Index of ");
     body.push_str(&encode_text(&dir.display().to_string()));
     body.push_str("</h1><table><tr><th>Name</th><th>Type</th></tr>");

@@ -24,6 +24,7 @@ use pqq_tls::{
 };
 use pqq_tls::{HybridSuite, HybridTlsEngine, KemProvider, MlKem1024, MlKem512, MlKem768};
 use rand::{rngs::OsRng, RngCore};
+use serde::Serialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
@@ -44,6 +45,42 @@ const DEFAULT_TICKET_LIFETIME_SECS: u64 = 60 * 60;
 const DEFAULT_MAX_EARLY_DATA: u32 = 16 * 1024;
 const HANDSHAKE_QUEUE_SIZE: usize = 1024;
 const PEER_CHANNEL_CAPACITY: usize = 32;
+
+#[derive(Serialize)]
+struct ServerTicketContext<'a> {
+    kind: &'static str,
+    alpns: &'a [String],
+    max_early_data: u32,
+    security_profile: &'static str,
+    strict_transport: Option<&'a StrictTransportDirective>,
+    publish_kem_public: bool,
+}
+
+fn security_profile_label(profile: SecurityProfile) -> &'static str {
+    match profile {
+        SecurityProfile::Turbo => "turbo",
+        SecurityProfile::Balanced => "balanced",
+        SecurityProfile::Fortress => "fortress",
+    }
+}
+
+fn encode_server_ticket_context(
+    alpns: &[String],
+    max_early_data: u32,
+    profile: SecurityProfile,
+    strict_transport: Option<&StrictTransportDirective>,
+    publish_kem_public: bool,
+) -> Vec<u8> {
+    let context = ServerTicketContext {
+        kind: "pqq-server",
+        alpns,
+        max_early_data,
+        security_profile: security_profile_label(profile),
+        strict_transport,
+        publish_kem_public,
+    };
+    serde_json::to_vec(&context).expect("serialize ticket context")
+}
 
 #[derive(Debug)]
 struct HandshakeInbox {
@@ -320,9 +357,11 @@ fn create_server_handshake<P: KemProvider>(
     max_early_data: u32,
     static_keypair: StaticKemKeyPair,
     replay_guard: Arc<dyn ReplayGuard>,
+    application_context: &[u8],
 ) -> ServerHandshake<P> {
     ServerHandshake::new(kem, suite, manager, static_keypair, replay_guard)
         .with_max_early_data(max_early_data)
+        .with_application_context(application_context.to_vec())
 }
 
 /// Minimal async server that accepts Initial packets, negotiates ALPN, and
@@ -333,6 +372,7 @@ pub struct Server {
     tls: Arc<Mutex<HybridTlsEngine>>,
     ticket_manager: Arc<SessionTicketManager>,
     max_early_data: u32,
+    application_context: Vec<u8>,
     static_keypair: StaticKemKeyPair,
     suite: HybridSuite,
     security_profile: SecurityProfile,
@@ -425,12 +465,21 @@ impl Server {
         });
         let handshake_timeout = handshake_config.handshake_timeout;
         let session_semaphore = Arc::new(Semaphore::new(config.max_concurrent_sessions));
+        let application_context = encode_server_ticket_context(
+            &handshake_config.supported_alpns,
+            max_early_data,
+            profile,
+            strict_transport.as_ref(),
+            publish_kem_public,
+        );
+        let driver = HandshakeDriver::new(handshake_config);
         Ok(Self {
             socket,
-            driver: HandshakeDriver::new(handshake_config),
+            driver,
             tls: Arc::new(Mutex::new(HybridTlsEngine::new())),
             ticket_manager,
             max_early_data,
+            application_context,
             static_keypair,
             suite,
             security_profile: profile,
@@ -740,9 +789,15 @@ impl Server {
             self.max_early_data,
             self.static_keypair.clone(),
             Arc::clone(&self.replay_guard),
+            &self.application_context,
         );
+        let peer_label = peer.to_string();
         let result = handshake
-            .respond(&client_payload, &client_hello_bytes)
+            .respond(
+                &client_payload,
+                &client_hello_bytes,
+                Some(peer_label.as_bytes()),
+            )
             .map_err(ServerError::Hybrid)?;
         let server_payload = result.payload.clone();
         let encoded = cbor_to_vec(&server_payload).map_err(ServerError::Encode)?;

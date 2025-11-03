@@ -11,6 +11,7 @@ use pqq_core::{
     FrameSequencer, HandshakeResponse, FRAME_HEADER_LEN, FRAME_MAX_PAYLOAD, HANDSHAKE_MESSAGE_MAX,
 };
 use tokio::net::UdpSocket;
+use tokio::time::{timeout, Duration};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -191,16 +192,30 @@ async fn initial_probe(
     let mut buf = [0u8; FRAME_HEADER_LEN + FRAME_MAX_PAYLOAD];
     let mut framing = FrameSequencer::new(0, 0);
     let mut assembler = ChunkAssembler::new(HANDSHAKE_MESSAGE_MAX);
-    let response_bytes = loop {
-        let len = socket.recv(&mut buf).await?;
-        let slice = framing
-            .decode(&buf[..len])
-            .map_err(|err| ProbeError::Handshake(pqq_core::HandshakeError::Frame(err)))?;
-        if let Some(message) = assembler
-            .push_slice(slice)
-            .map_err(|err| ProbeError::Handshake(pqq_core::HandshakeError::Frame(err)))?
-        {
-            break message;
+    // Wait for the server response but don't block forever — time out after 5s
+    let response_bytes = match timeout(Duration::from_secs(5), async {
+        loop {
+            let len = socket.recv(&mut buf).await?;
+            let slice = framing
+                .decode(&buf[..len])
+                .map_err(|err| ProbeError::Handshake(pqq_core::HandshakeError::Frame(err)))?;
+            if let Some(message) = assembler
+                .push_slice(slice)
+                .map_err(|err| ProbeError::Handshake(pqq_core::HandshakeError::Frame(err)))?
+            {
+                break Ok::<_, ProbeError>(message);
+            }
+        }
+    })
+    .await
+    {
+        Ok(Ok(msg)) => msg,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => {
+            return Err(ProbeError::Io(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "timed out waiting for server response",
+            )))
         }
     };
     let response = decode_handshake_response(&response_bytes)?;

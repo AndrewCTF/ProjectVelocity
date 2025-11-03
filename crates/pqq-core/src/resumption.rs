@@ -16,6 +16,8 @@ pub enum ReplayError {
     NotYetValid,
     #[error("replay cache error: {0}")]
     Storage(String),
+    #[error("replay token used from different peer than bound peer")]
+    PeerMismatch,
 }
 
 /// Borrowed metadata describing a prospective 0-RTT attempt.
@@ -23,6 +25,9 @@ pub enum ReplayError {
 pub struct ReplayToken<'a> {
     pub ticket_id: &'a [u8],
     pub client_nonce: &'a [u8],
+    /// Optional opaque peer identifier (e.g. client IP or connection id) used for binding
+    /// the first use of a ticket to a particular peer. If None, no binding is performed.
+    pub peer_id: Option<&'a [u8]>,
     pub not_before: SystemTime,
     pub expires_at: SystemTime,
 }
@@ -32,6 +37,10 @@ impl ReplayToken<'_> {
         let mut hasher = Sha3_256::new();
         hasher.update(self.ticket_id);
         hasher.update(self.client_nonce);
+        if let Some(peer) = self.peer_id {
+            // include peer_id in digest to make the recorded "seen" value unique per peer
+            hasher.update(peer);
+        }
         let digest = hasher.finalize();
         let mut out = [0u8; 32];
         out.copy_from_slice(&digest);
@@ -48,6 +57,9 @@ pub trait ReplayGuard: Send + Sync + fmt::Debug {
 struct TicketState {
     expires_at: SystemTime,
     seen: HashSet<[u8; 32]>,
+    /// If set, the ticket is bound to this peer_id on first use and subsequent uses
+    /// must come from the same peer to be accepted.
+    bound_peer: Option<Vec<u8>>,
 }
 
 /// In-memory replay guard suitable for single-process deployments.
@@ -55,20 +67,42 @@ struct TicketState {
 pub struct InMemoryReplayGuard {
     inner: Mutex<HashMap<Vec<u8>, TicketState>>,
     capacity: usize,
+    /// Maximum number of distinct seen digests to record per ticket. Prevents unbounded
+    /// memory growth if many unique attempts use the same ticket_id.
+    per_ticket_limit: usize,
+    /// If true, bind the first registered use of a ticket to the provided peer_id (if any)
+    /// and reject subsequent attempts from a different peer.
+    bind_peer_on_first_use: bool,
 }
 
 impl Default for InMemoryReplayGuard {
     fn default() -> Self {
-        Self::new(4096)
+        Self::new_with_options(4096, 1024, true)
     }
 }
 
 impl InMemoryReplayGuard {
     pub fn new(capacity: usize) -> Self {
+        Self::new_with_options(capacity, 1024, true)
+    }
+
+    /// Create a guard with explicit limits and binding option.
+    pub fn new_with_options(
+        capacity: usize,
+        per_ticket_limit: usize,
+        bind_peer_on_first_use: bool,
+    ) -> Self {
         Self {
             inner: Mutex::new(HashMap::new()),
             capacity: capacity.max(16),
+            per_ticket_limit: per_ticket_limit.max(1),
+            bind_peer_on_first_use,
         }
+    }
+
+    /// Constructor retained for callers that intentionally disable peer binding.
+    pub fn new_unbound(capacity: usize, per_ticket_limit: usize) -> Self {
+        Self::new_with_options(capacity, per_ticket_limit, false)
     }
 
     fn purge_expired(states: &mut HashMap<Vec<u8>, TicketState>) {
@@ -110,6 +144,12 @@ impl ReplayGuard for InMemoryReplayGuard {
             return Err(ReplayError::Expired);
         }
         if let Some(state) = guard.get(token.ticket_id) {
+            // If the token was bound to a peer on first use, ensure the peer matches.
+            if let (Some(bound), Some(peer)) = (state.bound_peer.as_ref(), token.peer_id) {
+                if bound.as_slice() != peer {
+                    return Err(ReplayError::PeerMismatch);
+                }
+            }
             if state.seen.contains(&token.digest()) {
                 return Err(ReplayError::AlreadySeen);
             }
@@ -135,9 +175,27 @@ impl ReplayGuard for InMemoryReplayGuard {
             .or_insert_with(|| TicketState {
                 expires_at: token.expires_at,
                 seen: HashSet::new(),
+                bound_peer: None,
             });
         if state.expires_at < token.expires_at {
             state.expires_at = token.expires_at;
+        }
+        // If configured, bind the ticket to the first peer that registers it.
+        if self.bind_peer_on_first_use {
+            if state.bound_peer.is_none() {
+                if let Some(peer) = token.peer_id {
+                    state.bound_peer = Some(peer.to_vec());
+                }
+            } else if let (Some(bound), Some(peer)) = (state.bound_peer.as_ref(), token.peer_id) {
+                if bound.as_slice() != peer {
+                    return Err(ReplayError::PeerMismatch);
+                }
+            }
+        }
+        if state.seen.len() >= self.per_ticket_limit {
+            return Err(ReplayError::Storage(
+                "per-ticket seen limit exceeded".into(),
+            ));
         }
         if !state.seen.insert(digest) {
             return Err(ReplayError::AlreadySeen);
@@ -159,6 +217,7 @@ mod tests {
         let token = ReplayToken {
             ticket_id: b"ticket-123",
             client_nonce: b"nonce-abc",
+            peer_id: None,
             not_before: now,
             expires_at: now + Duration::from_secs(60),
         };
@@ -175,9 +234,37 @@ mod tests {
         let expired = ReplayToken {
             ticket_id: b"ticket-expired",
             client_nonce: b"nonce-expired",
+            peer_id: None,
             not_before: now - Duration::from_secs(120),
             expires_at: now - Duration::from_secs(60),
         };
         assert_eq!(guard.register(expired), Err(ReplayError::Expired));
+    }
+
+    #[test]
+    fn guard_rejects_different_peer_when_bound() {
+        let guard = InMemoryReplayGuard::new_with_options(1024, 16, true);
+        let now = SystemTime::now();
+        let token1 = ReplayToken {
+            ticket_id: b"ticket-bind",
+            client_nonce: b"nonce-1",
+            peer_id: Some(b"peer-A"),
+            not_before: now,
+            expires_at: now + Duration::from_secs(60),
+        };
+        // first use binds to peer-A
+        guard.check(token1).expect("first check");
+        guard.register(token1).expect("first register");
+
+        // same ticket+nonce from different peer should be rejected
+        let token2 = ReplayToken {
+            ticket_id: b"ticket-bind",
+            client_nonce: b"nonce-1",
+            peer_id: Some(b"peer-B"),
+            not_before: now,
+            expires_at: now + Duration::from_secs(60),
+        };
+        assert_eq!(guard.check(token2), Err(ReplayError::PeerMismatch));
+        assert_eq!(guard.register(token2), Err(ReplayError::PeerMismatch));
     }
 }

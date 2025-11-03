@@ -18,10 +18,22 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::ptr;
 use std::sync::{Arc, Mutex, MutexGuard, Once};
+use std::time::Duration;
+use tokio::runtime::Runtime;
+use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
+use url::Url;
 
 const ERR_PANIC: i32 = -900;
 
 type ReleaseCallback = unsafe extern "C" fn(*const u8, usize, *mut c_void);
+type HandlerCallback = unsafe extern "C" fn(
+    payload: *const u8,
+    payload_len: usize,
+    handshake_json: *const c_char,
+    out_response: *mut PqqOwnedSlice,
+    user_data: *mut c_void,
+) -> i32;
 
 #[repr(C)]
 pub struct PqqOwnedSlice {

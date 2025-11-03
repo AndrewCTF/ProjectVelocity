@@ -1,7 +1,7 @@
 use clap::Parser;
 use rand::Rng;
 use std::net::SocketAddr;
-use std::time::Instant;
+// Instant not needed: use tokio::time::timeout instead for recv-timeouts
 use tokio::net::UdpSocket;
 use tokio::time::{self, Duration};
 
@@ -62,10 +62,20 @@ async fn main() -> anyhow::Result<()> {
     let mut client_addr: Option<SocketAddr> = None;
     let mut forwarded_packets: u64 = 0;
     let idle_timeout = Duration::from_millis(args.idle_timeout_ms);
-    let mut last_activity: Option<Instant> = None;
 
     loop {
-        let (len, src) = socket.recv_from(&mut buf).await?;
+        let (len, src) = if args.idle_timeout_ms > 0 {
+            match time::timeout(idle_timeout, socket.recv_from(&mut buf)).await {
+                Ok(Ok((len, src))) => (len, src),
+                Ok(Err(e)) => return Err(e.into()),
+                Err(_) => {
+                    log::info!("Idle timeout exceeded ({} ms), exiting", args.idle_timeout_ms);
+                    return Ok(());
+                }
+            }
+        } else {
+            socket.recv_from(&mut buf).await?
+        };
         let packet = &mut buf[..len];
 
         // Discover client address
@@ -170,15 +180,6 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // tiny sleep to avoid busy-loop in some environments
-        // Update last activity timestamp and exit if idle timeout exceeded
-        last_activity = Some(Instant::now());
-        if args.idle_timeout_ms > 0 && last_activity.is_some_and(|t| t.elapsed() > idle_timeout) {
-            log::info!(
-                "Idle timeout exceeded ({} ms), exiting",
-                args.idle_timeout_ms
-            );
-            return Ok(());
-        }
         time::sleep(Duration::from_millis(1)).await;
     }
 }

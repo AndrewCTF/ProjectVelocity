@@ -135,6 +135,26 @@ where
     }
 }
 
+fn guard_i32<F>(f: F) -> i32
+where
+    F: FnOnce() -> i32,
+{
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(code) => code,
+        Err(_) => {
+            tracing::error!(target: "pqq_native::ffi", "panic caught at FFI boundary");
+            -900
+        }
+    }
+}
+
+fn guard_unit<F>(f: F)
+where
+    F: FnOnce() -> (),
+{
+    let _ = catch_unwind(AssertUnwindSafe(f));
+}
+
 fn lock_guard<'a, T>(mutex: &'a Mutex<T>, name: &str) -> MutexGuard<'a, T> {
     match mutex.lock() {
         Ok(guard) => guard,
@@ -171,18 +191,20 @@ fn easy_error_code(err: &EasyError) -> i32 {
 /// populated by this library. After this call the slice is reset to empty.
 #[no_mangle]
 pub unsafe extern "C" fn pqq_owned_slice_release(slice: *mut PqqOwnedSlice) {
-    if slice.is_null() {
-        return;
-    }
-    let slice_ref = &mut *slice;
-    if let Some(release) = slice_ref.release.take() {
-        if !slice_ref.data.is_null() {
-            release(slice_ref.data, slice_ref.len, slice_ref.release_ctx);
+    guard_unit(|| unsafe {
+        if slice.is_null() {
+            return;
         }
-    }
-    slice_ref.data = ptr::null();
-    slice_ref.len = 0;
-    slice_ref.release_ctx = ptr::null_mut();
+        let slice_ref = &mut *slice;
+        if let Some(release) = slice_ref.release.take() {
+            if !slice_ref.data.is_null() {
+                release(slice_ref.data, slice_ref.len, slice_ref.release_ctx);
+            }
+        }
+        slice_ref.data = ptr::null();
+        slice_ref.len = 0;
+        slice_ref.release_ctx = ptr::null_mut();
+    });
 }
 
 #[derive(Debug)]
@@ -472,134 +494,136 @@ pub unsafe extern "C" fn pqq_easy_request(
     config_json: *const c_char,
     out_response: *mut PqqOwnedSlice,
 ) -> i32 {
-    pqq_init();
-    if config_json.is_null() || out_response.is_null() {
-        return respond_with_error(out_response, -1, "null pointer");
-    }
-
-    let cfg_str = match CStr::from_ptr(config_json).to_str() {
-        Ok(s) => s,
-        Err(_) => return respond_with_error(out_response, -2, "invalid utf-8"),
-    };
-
-    let config: EasyClientRequestConfig = match serde_json::from_str(cfg_str) {
-        Ok(cfg) => cfg,
-        Err(_) => return respond_with_error(out_response, -3, "invalid config json"),
-    };
-
-    let mut builder = match EasyClientConfig::builder().server_addr(&config.server_addr) {
-        Ok(b) => b,
-        Err(err) => return respond_with_easy_error(out_response, err),
-    };
-
-    if let Some(ref hostname) = config.hostname {
-        builder = builder.hostname(hostname.clone());
-    }
-
-    if let Some(ref profile) = config.profile {
-        builder = match builder.security_profile_str(profile.as_str()) {
-            Ok(b) => b,
-            Err(err) => return respond_with_easy_error(out_response, err),
-        };
-    }
-
-    if let Some(ref key_b64) = config.server_key_base64 {
-        builder = match builder.server_key_base64(key_b64) {
-            Ok(b) => b,
-            Err(err) => return respond_with_easy_error(out_response, err),
-        };
-    } else if let Some(ref cached_host) = config.cached_key_host {
-        builder = builder.server_key_cache(cached_host.clone());
-    }
-
-    if let Some(ref cache_dir) = config.cache_dir {
-        builder = builder.cache_dir(PathBuf::from(cache_dir));
-    }
-
-    if config.cache_key {
-        builder = builder.cache_key(true);
-    }
-
-    if let Some(enabled) = config.fallback.enabled {
-        if !enabled {
-            builder = builder.disable_fallback();
+    guard_slice(out_response, || {
+        pqq_init();
+        if config_json.is_null() || out_response.is_null() {
+            return respond_with_error(out_response, -1, "null pointer");
         }
-    }
 
-    if let Some(force_http1) = config.fallback.force_http1 {
-        builder = builder.fallback_http1_only(force_http1);
-    }
+        let cfg_str = match unsafe { CStr::from_ptr(config_json) }.to_str() {
+            Ok(s) => s,
+            Err(_) => return respond_with_error(out_response, -2, "invalid utf-8"),
+        };
 
-    if let Some(retries) = config.fallback.retries {
-        builder = builder.fallback_retries(retries);
-    }
+        let config: EasyClientRequestConfig = match serde_json::from_str(cfg_str) {
+            Ok(cfg) => cfg,
+            Err(_) => return respond_with_error(out_response, -3, "invalid config json"),
+        };
 
-    if let Some(timeout_ms) = config.fallback.timeout_ms {
-        builder = builder.fallback_timeout(Duration::from_millis(timeout_ms));
-    }
-
-    if let Some(backoff_ms) = config.fallback.initial_backoff_ms {
-        builder = builder.fallback_initial_backoff(Duration::from_millis(backoff_ms));
-    }
-
-    if let Some(ref base_url) = config.fallback.base_url {
-        builder = builder.fallback_base_url(base_url.clone());
-    }
-
-    let client_config = match builder.build() {
-        Ok(cfg) => cfg,
-        Err(err) => return respond_with_easy_error(out_response, err),
-    };
-
-    let client = match EasyClient::connect(client_config) {
-        Ok(client) => client,
-        Err(err) => return respond_with_easy_error(out_response, err),
-    };
-
-    let path = config.path.unwrap_or_else(|| "/".to_string());
-    let method = config.method.unwrap_or_else(|| "GET".to_string());
-    let method_upper = method.trim().to_uppercase();
-
-    let response = match method_upper.as_str() {
-        "GET" => match client.fetch_text(&path) {
-            Ok(body) => EasyClientResponse {
-                status: "ok",
-                body: Some(body),
-                handshake: None,
-            },
+        let mut builder = match EasyClientConfig::builder().server_addr(&config.server_addr) {
+            Ok(b) => b,
             Err(err) => return respond_with_easy_error(out_response, err),
-        },
-        "JSON" => match client.fetch_json::<Value>(&path) {
-            Ok(json_body) => match serde_json::to_string(&json_body) {
-                Ok(text) => EasyClientResponse {
+        };
+
+        if let Some(ref hostname) = config.hostname {
+            builder = builder.hostname(hostname.clone());
+        }
+
+        if let Some(ref profile) = config.profile {
+            builder = match builder.security_profile_str(profile.as_str()) {
+                Ok(b) => b,
+                Err(err) => return respond_with_easy_error(out_response, err),
+            };
+        }
+
+        if let Some(ref key_b64) = config.server_key_base64 {
+            builder = match builder.server_key_base64(key_b64) {
+                Ok(b) => b,
+                Err(err) => return respond_with_easy_error(out_response, err),
+            };
+        } else if let Some(ref cached_host) = config.cached_key_host {
+            builder = builder.server_key_cache(cached_host.clone());
+        }
+
+        if let Some(ref cache_dir) = config.cache_dir {
+            builder = builder.cache_dir(PathBuf::from(cache_dir));
+        }
+
+        if config.cache_key {
+            builder = builder.cache_key(true);
+        }
+
+        if let Some(enabled) = config.fallback.enabled {
+            if !enabled {
+                builder = builder.disable_fallback();
+            }
+        }
+
+        if let Some(force_http1) = config.fallback.force_http1 {
+            builder = builder.fallback_http1_only(force_http1);
+        }
+
+        if let Some(retries) = config.fallback.retries {
+            builder = builder.fallback_retries(retries);
+        }
+
+        if let Some(timeout_ms) = config.fallback.timeout_ms {
+            builder = builder.fallback_timeout(Duration::from_millis(timeout_ms));
+        }
+
+        if let Some(backoff_ms) = config.fallback.initial_backoff_ms {
+            builder = builder.fallback_initial_backoff(Duration::from_millis(backoff_ms));
+        }
+
+        if let Some(ref base_url) = config.fallback.base_url {
+            builder = builder.fallback_base_url(base_url.clone());
+        }
+
+        let client_config = match builder.build() {
+            Ok(cfg) => cfg,
+            Err(err) => return respond_with_easy_error(out_response, err),
+        };
+
+        let client = match EasyClient::connect(client_config) {
+            Ok(client) => client,
+            Err(err) => return respond_with_easy_error(out_response, err),
+        };
+
+        let path = config.path.unwrap_or_else(|| "/".to_string());
+        let method = config.method.unwrap_or_else(|| "GET".to_string());
+        let method_upper = method.trim().to_uppercase();
+
+        let response = match method_upper.as_str() {
+            "GET" => match client.fetch_text(&path) {
+                Ok(body) => EasyClientResponse {
                     status: "ok",
-                    body: Some(text),
+                    body: Some(body),
                     handshake: None,
                 },
-                Err(_) => return respond_with_error(out_response, -6, "serialization failure"),
+                Err(err) => return respond_with_easy_error(out_response, err),
             },
-            Err(err) => return respond_with_easy_error(out_response, err),
-        },
-        "PROBE" => match client.probe() {
-            Ok(handshake) => EasyClientResponse {
-                status: "ok",
-                body: None,
-                handshake: Some(handshake),
+            "JSON" => match client.fetch_json::<Value>(&path) {
+                Ok(json_body) => match serde_json::to_string(&json_body) {
+                    Ok(text) => EasyClientResponse {
+                        status: "ok",
+                        body: Some(text),
+                        handshake: None,
+                    },
+                    Err(_) => return respond_with_error(out_response, -6, "serialization failure"),
+                },
+                Err(err) => return respond_with_easy_error(out_response, err),
             },
-            Err(err) => return respond_with_easy_error(out_response, err),
-        },
-        other => {
-            return respond_with_error(out_response, -7, &format!("unsupported method {other}"))
-        }
-    };
+            "PROBE" => match client.probe() {
+                Ok(handshake) => EasyClientResponse {
+                    status: "ok",
+                    body: None,
+                    handshake: Some(handshake),
+                },
+                Err(err) => return respond_with_easy_error(out_response, err),
+            },
+            other => {
+                return respond_with_error(out_response, -7, &format!("unsupported method {other}"))
+            }
+        };
 
-    match serde_json::to_vec(&response) {
-        Ok(bytes) => {
-            write_owned_slice(out_response, bytes);
-            0
+        match serde_json::to_vec(&response) {
+            Ok(bytes) => {
+                write_owned_slice(out_response, bytes);
+                0
+            }
+            Err(_) => respond_with_error(out_response, -5, "serialization failure"),
         }
-        Err(_) => respond_with_error(out_response, -5, "serialization failure"),
-    }
+    })
 }
 
 #[derive(Serialize)]

@@ -27,11 +27,14 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Tests
-        run: cargo test --workspace --all-targets
+      - name: Tests (fast)
+        # Exclude heavy benchmark or tooling crates that aren't necessary for most CI runs
+        run: cargo test --workspace --all-targets --exclude handshake-bench --exclude udp-mitm
 
       - name: Bench harness builds
+        if: github.event_name == 'push'
         run: cargo bench -p handshake-bench --no-run
 
       - name: Bench smoke test
+        if: github.event_name == 'push'
         run: cargo bench -p handshake-bench -- --quick

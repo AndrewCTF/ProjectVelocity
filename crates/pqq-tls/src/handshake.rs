@@ -730,8 +730,7 @@ impl<P: KemProvider> ServerHandshake<P> {
         peer_id: Option<&[u8]>,
     ) -> Result<ServerHandshakeResult, HybridHandshakeError> {
         let mut transcript = Transcript::new();
-        peer_id: Option<&[u8]>,
-    ) -> Result<ServerHandshakeResult, HybridHandshakeError> {
+        transcript.update(client_raw);
 
         let context_bytes = client_payload.encode_without_auth()?;
         let context_digest = sha384_digest(&context_bytes);
@@ -751,66 +750,63 @@ impl<P: KemProvider> ServerHandshake<P> {
         let mut pending_replay: Option<PendingReplay> = None;
 
         if let Some(identity) = &client_payload.psk_identity {
-            match self.ticket_manager.decrypt(identity) {
-                Ok(ticket) => {
-                    let early_len = client_payload
-                        .early_data
-                        .as_ref()
-                        .map(|d| d.len())
-                        .unwrap_or(0);
-                    if ticket
-                        .allows_0rtt(
-                            SystemTime::now(),
-                            early_len,
-                            self.suite,
-                            &self.application_context,
-                        )
-                        .is_ok()
-                        && ticket.max_early_data >= early_len as u32
-                    {
-                        resumption_secret = Some(ticket.resumption_secret);
-                        if let Some(_early) = client_payload.early_data.as_ref() {
-                            let peer_bytes = peer_id.map(|bytes| bytes.to_vec());
-                                    let token = ReplayToken {
-                                        ticket_id: &ticket.ticket_id,
-                                        client_nonce: &client_payload.client_nonce,
-                                peer_id: peer_bytes.as_deref(),
-                                        not_before: ticket.not_before,
-                                        expires_at: ticket.expires_at,
-                                    };
-                            match self.replay_guard.check(token) {
-                                Ok(()) => {
-                                    resumption_accepted = true;
-                                    pending_replay = Some(PendingReplay {
-                                        ticket_id: ticket.ticket_id,
-                                        client_nonce: client_payload.client_nonce,
-                                        not_before: ticket.not_before,
-                                        expires_at: ticket.expires_at,
-                                        peer_id: peer_bytes,
-                                    });
-                                }
-                                Err(ReplayError::AlreadySeen)
-                                | Err(ReplayError::Expired)
-                                | Err(ReplayError::NotYetValid)
-                                | Err(ReplayError::PeerMismatch) => {
-                                    // treat peer mismatch as a non-accepted resumption
-                                    resumption_accepted = false;
-                                    resumption_secret = None;
-                                    pending_replay = None;
-                                }
-                                Err(ReplayError::Storage(_)) => {
-                                    resumption_secret = None;
-                                    resumption_accepted = false;
-                                    pending_replay = None;
-                                }
+            if let Ok(ticket) = self.ticket_manager.decrypt(identity) {
+                let early_len = client_payload
+                    .early_data
+                    .as_ref()
+                    .map(|d| d.len())
+                    .unwrap_or(0);
+
+                if ticket
+                    .allows_0rtt(
+                        SystemTime::now(),
+                        early_len,
+                        self.suite,
+                        &self.application_context,
+                    )
+                    .is_ok()
+                {
+                    resumption_secret = Some(ticket.resumption_secret);
+
+                    if let Some(_early) = client_payload.early_data.as_ref() {
+                        let peer_bytes = peer_id.map(|bytes| bytes.to_vec());
+                        let token = ReplayToken {
+                            ticket_id: &ticket.ticket_id,
+                            client_nonce: &client_payload.client_nonce,
+                            peer_id: peer_bytes.as_deref(),
+                            not_before: ticket.not_before,
+                            expires_at: ticket.expires_at,
+                        };
+
+                        match self.replay_guard.check(token) {
+                            Ok(()) => {
+                                resumption_accepted = true;
+                                pending_replay = Some(PendingReplay {
+                                    ticket_id: ticket.ticket_id,
+                                    client_nonce: client_payload.client_nonce,
+                                    not_before: ticket.not_before,
+                                    expires_at: ticket.expires_at,
+                                    peer_id: peer_bytes,
+                                });
+                            }
+                            Err(ReplayError::AlreadySeen)
+                            | Err(ReplayError::Expired)
+                            | Err(ReplayError::NotYetValid)
+                            | Err(ReplayError::PeerMismatch)
+                            | Err(ReplayError::Storage(_)) => {
+                                // Treat any replay guard failure as a signal to fall back to
+                                // a fresh handshake so that early data cannot be replayed
+                                // under a different peer binding.
+                                resumption_secret = None;
+                                resumption_accepted = false;
+                                pending_replay = None;
                             }
                         }
                     }
                 }
-                Err(_err) => {
-                    // Decryption errors are handled by falling back to a fresh handshake.
-                }
             }
+            // Ticket decryption errors fall back to a fresh handshake implicitly when the
+            // resumption secret remains unset.
         }
         self.accepted_resumption = resumption_secret;
 

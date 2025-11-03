@@ -62,12 +62,11 @@ async fn main() -> anyhow::Result<()> {
     let mut client_addr: Option<SocketAddr> = None;
     let mut forwarded_packets: u64 = 0;
     let idle_timeout = Duration::from_millis(args.idle_timeout_ms);
-    let mut last_activity = Instant::now();
+    let mut last_activity: Option<Instant> = None;
 
     loop {
         let (len, src) = socket.recv_from(&mut buf).await?;
         let packet = &mut buf[..len];
-        last_activity = Instant::now();
 
         // Discover client address
         if client_addr.is_none() {
@@ -171,8 +170,9 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // tiny sleep to avoid busy-loop in some environments
-        // Exit if idle timeout exceeded
-        if args.idle_timeout_ms > 0 && last_activity.elapsed() > idle_timeout {
+        // Update last activity timestamp and exit if idle timeout exceeded
+        last_activity = Some(Instant::now());
+        if args.idle_timeout_ms > 0 && last_activity.is_some_and(|t| t.elapsed() > idle_timeout) {
             log::info!(
                 "Idle timeout exceeded ({} ms), exiting",
                 args.idle_timeout_ms

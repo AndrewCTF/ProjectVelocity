@@ -16,25 +16,74 @@ use std::ffi::{c_char, c_void, CStr, CString};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::ptr;
-use std::sync::{Arc, Mutex, Once};
-use std::time::Duration;
-use tokio::runtime::Runtime;
-use tokio::sync::oneshot;
-use tokio::task::JoinHandle;
-use url::Url;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::{Arc, Mutex, MutexGuard, Once};
+    guard_slice(out_response, || {
+        pqq_init();
+        if config_json.is_null() || out_response.is_null() {
+            return respond_with_error(out_response, -1, "null pointer");
+        }
 
-type HandlerCallback = unsafe extern "C" fn(
-    request_ptr: *const u8,
-    request_len: usize,
-    handshake_json: *const c_char,
-    out_response: *mut PqqOwnedSlice,
-    user_data: *mut c_void,
-) -> i32;
+        let cfg_str = match CStr::from_ptr(config_json).to_str() {
+            Ok(s) => s,
+            Err(_) => return respond_with_error(out_response, -2, "invalid utf-8"),
+        };
 
-type ReleaseCallback = unsafe extern "C" fn(*const u8, usize, *mut c_void);
+        let config: EasyServerStartConfig = match serde_json::from_str(cfg_str) {
+            Ok(cfg) => cfg,
+            Err(_) => return respond_with_error(out_response, -3, "invalid config json"),
+        };
 
-#[repr(C)]
-pub struct PqqOwnedSlice {
+        let mut builder = match EasyServerBuilder::new().bind_addr(&config.bind) {
+            Ok(b) => b,
+            Err(err) => return respond_with_easy_error(out_response, err),
+        };
+
+        let profile_label = config.profile.clone();
+        builder = match builder.security_profile_str(profile_label.as_str()) {
+            Ok(b) => b,
+            Err(err) => return respond_with_easy_error(out_response, err),
+        };
+
+        builder = builder.alpns(config.alpns.clone());
+        builder = builder.cache_public_key(config.cache_public_key);
+
+        if let Some(ref text) = config.static_text {
+            builder = builder.static_text(text.clone());
+        } else if let Some(ref json_val) = config.static_json {
+            builder = builder.static_json(json_val.clone());
+        }
+
+        let state = global_state();
+        let runtime = &state.runtime;
+        let result = runtime.block_on(async move {
+            let handle = builder.start().await.map_err(|err| err)?;
+            let addr = handle.addr();
+            let port = addr.port();
+            let kem_public_base64 = handle.kem_public_base64();
+            let response = EasyServerStartResponse {
+                status: "ok",
+                port,
+                addr: addr.to_string(),
+                profile: profile_label,
+                alpns: config.alpns,
+                kem_public_base64,
+            };
+            let payload = serde_json::to_vec(&response)
+                .map_err(|_| EasyError::Serde(serde_json::Error::custom("serialize")))?;
+            Ok::<(EasyServerHandle, Vec<u8>), EasyError>((handle, payload))
+        });
+
+        match result {
+            Ok((handle, payload)) => {
+                write_owned_slice(out_response, payload);
+                let mut easy = lock_guard(&state.easy_servers, "easy_servers");
+                easy.insert(handle.addr().port(), EasyServerEntry { handle });
+                0
+            }
+            Err(err) => respond_with_easy_error(out_response, err),
+        }
+    })
     pub data: *const u8,
     pub len: usize,
     pub release: Option<ReleaseCallback>,
@@ -193,12 +242,12 @@ impl NativeHandler {
     }
 
     fn configure(&self, func: HandlerCallback, user_data: *mut c_void) {
-        let mut guard = self.callback.lock().expect("callback mutex");
+        let mut guard = lock_guard(&self.callback, "native_handler.callback");
         *guard = Some(CallbackEntry { func, user_data });
     }
 
     fn clear(&self) {
-        let mut guard = self.callback.lock().expect("callback mutex");
+        let mut guard = lock_guard(&self.callback, "native_handler.callback");
         guard.take();
     }
 
@@ -230,7 +279,7 @@ impl NativeHandler {
 
     fn invoke_inner(&self, request: &Request) -> Result<Response, HandlerError> {
         let callback = {
-            let guard = self.callback.lock().expect("callback mutex");
+            let guard = lock_guard(&self.callback, "native_handler.callback");
             guard.as_ref().cloned()
         };
 

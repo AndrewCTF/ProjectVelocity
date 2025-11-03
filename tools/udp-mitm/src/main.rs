@@ -69,7 +69,10 @@ async fn main() -> anyhow::Result<()> {
                 Ok(Ok((len, src))) => (len, src),
                 Ok(Err(e)) => return Err(e.into()),
                 Err(_) => {
-                    log::info!("Idle timeout exceeded ({} ms), exiting", args.idle_timeout_ms);
+                    log::info!(
+                        "Idle timeout exceeded ({} ms), exiting",
+                        args.idle_timeout_ms
+                    );
                     return Ok(());
                 }
             }

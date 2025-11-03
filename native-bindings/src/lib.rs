@@ -135,6 +135,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 fn guard_i32<F>(f: F) -> i32
 where
     F: FnOnce() -> i32,
@@ -150,7 +151,7 @@ where
 
 fn guard_unit<F>(f: F)
 where
-    F: FnOnce() -> (),
+    F: FnOnce(),
 {
     let _ = catch_unwind(AssertUnwindSafe(f));
 }

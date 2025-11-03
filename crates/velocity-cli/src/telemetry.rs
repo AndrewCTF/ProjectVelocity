@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use once_cell::sync::Lazy;
 use prometheus::{self, Encoder, IntCounter, IntCounterVec, IntGauge, Opts, Registry, TextEncoder};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

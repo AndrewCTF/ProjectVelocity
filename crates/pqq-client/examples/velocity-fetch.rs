@@ -211,11 +211,12 @@ async fn initial_probe(
     {
         Ok(Ok(msg)) => msg,
         Ok(Err(e)) => return Err(e),
-        Err(_) =>
+        Err(_) => {
             return Err(ProbeError::Io(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 "timed out waiting for server response",
-            ))),
+            )))
+        }
     };
     let response = decode_handshake_response(&response_bytes)?;
     Ok(response)

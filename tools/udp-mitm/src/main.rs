@@ -1,9 +1,9 @@
-use std::net::SocketAddr;
 use clap::Parser;
+use rand::Rng;
+use std::net::SocketAddr;
+use std::time::Instant;
 use tokio::net::UdpSocket;
 use tokio::time::{self, Duration};
-use std::time::Instant;
-use rand::Rng;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -51,7 +51,11 @@ async fn main() -> anyhow::Result<()> {
     let server_addr: SocketAddr = args.server.parse()?;
 
     let socket = UdpSocket::bind(listen_addr).await?;
-    log::info!("UDP MITM listening on {} -> upstream {}", listen_addr, server_addr);
+    log::info!(
+        "UDP MITM listening on {} -> upstream {}",
+        listen_addr,
+        server_addr
+    );
 
     let mut buf = vec![0u8; 65535];
     // We'll record the first peer we see as the client.
@@ -63,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
     loop {
         let (len, src) = socket.recv_from(&mut buf).await?;
         let packet = &mut buf[..len];
-    last_activity = Instant::now();
+        last_activity = Instant::now();
 
         // Discover client address
         if client_addr.is_none() {
@@ -90,9 +94,17 @@ async fn main() -> anyhow::Result<()> {
 
             if args.tamper_xor != 0 && args.tamper_offset < out.len() {
                 out[args.tamper_offset] ^= args.tamper_xor;
-                log::warn!("Tampered packet from client: flipped offset {} with xor {:#x}", args.tamper_offset, args.tamper_xor);
+                log::warn!(
+                    "Tampered packet from client: flipped offset {} with xor {:#x}",
+                    args.tamper_offset,
+                    args.tamper_xor
+                );
             } else if args.tamper_xor != 0 {
-                log::warn!("Tamper offset {} out of range for packet len {}", args.tamper_offset, out.len());
+                log::warn!(
+                    "Tamper offset {} out of range for packet len {}",
+                    args.tamper_offset,
+                    out.len()
+                );
             }
 
             if args.truncate > 0 && args.truncate < out.len() {
@@ -106,7 +118,11 @@ async fn main() -> anyhow::Result<()> {
                     tokio::time::sleep(Duration::from_millis(args.delay_ms)).await;
                 }
                 socket.send_to(&out, server_addr).await?;
-                log::debug!("Forwarded {} bytes client->server (dup idx {})", out.len(), i);
+                log::debug!(
+                    "Forwarded {} bytes client->server (dup idx {})",
+                    out.len(),
+                    i
+                );
                 forwarded_packets += 1;
                 if args.max_packets > 0 && forwarded_packets >= args.max_packets {
                     log::info!("Reached max_packets={}, exiting", args.max_packets);
@@ -120,7 +136,10 @@ async fn main() -> anyhow::Result<()> {
                 log::debug!("Forwarded {} bytes server->client", packet.len());
                 forwarded_packets += 1;
                 if args.max_packets > 0 && forwarded_packets >= args.max_packets {
-                    log::info!("Reached max_packets={} (server->client), exiting", args.max_packets);
+                    log::info!(
+                        "Reached max_packets={} (server->client), exiting",
+                        args.max_packets
+                    );
                     return Ok(());
                 }
             } else {
@@ -135,19 +154,29 @@ async fn main() -> anyhow::Result<()> {
                 let mut out = packet.to_vec();
                 if args.tamper_xor != 0 && args.tamper_offset < out.len() {
                     out[args.tamper_offset] ^= args.tamper_xor;
-                    log::warn!("Tampered packet from client (late): flipped offset {}", args.tamper_offset);
+                    log::warn!(
+                        "Tampered packet from client (late): flipped offset {}",
+                        args.tamper_offset
+                    );
                 }
                 socket.send_to(&out, server_addr).await?;
             } else {
                 // unexpected
-                log::warn!("Packet from unknown {} (client known {}) - dropping", src, client_addr.unwrap());
+                log::warn!(
+                    "Packet from unknown {} (client known {}) - dropping",
+                    src,
+                    client_addr.unwrap()
+                );
             }
         }
 
         // tiny sleep to avoid busy-loop in some environments
         // Exit if idle timeout exceeded
         if args.idle_timeout_ms > 0 && last_activity.elapsed() > idle_timeout {
-            log::info!("Idle timeout exceeded ({} ms), exiting", args.idle_timeout_ms);
+            log::info!(
+                "Idle timeout exceeded ({} ms), exiting",
+                args.idle_timeout_ms
+            );
             return Ok(());
         }
         time::sleep(Duration::from_millis(1)).await;

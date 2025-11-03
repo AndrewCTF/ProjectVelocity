@@ -356,7 +356,11 @@ mod tests {
 
             // decode_frame should return Result, not panic. Use catch_unwind to be extra safe.
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decode_frame(&buf)));
-            assert!(res.is_ok(), "decode_frame panicked on random buffer length={}", len);
+            assert!(
+                res.is_ok(),
+                "decode_frame panicked on random buffer length={}",
+                len
+            );
         }
 
         // Craft specific malformed frames to validate error kinds
@@ -386,8 +390,13 @@ mod tests {
                 payload.push(lcg_next(&mut seed));
             }
             // Create a fake FrameSlice view (packet_number irrelevant for assembler)
-            let slice = FrameSlice { packet_number: 0, payload: &payload };
-            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| assembler.push_slice(slice)));
+            let slice = FrameSlice {
+                packet_number: 0,
+                payload: &payload,
+            };
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                assembler.push_slice(slice)
+            }));
             assert!(res.is_ok(), "ChunkAssembler panicked on random payload");
         }
     }
@@ -404,14 +413,20 @@ mod tests {
         slice_bytes.extend_from_slice(&declared.to_be_bytes());
         // no payload bytes follow
 
-        let slice = FrameSlice { packet_number: 0, payload: &slice_bytes };
+        let slice = FrameSlice {
+            packet_number: 0,
+            payload: &slice_bytes,
+        };
         let res = assembler.push_slice(slice).unwrap_err();
         assert_eq!(res, FrameError::PayloadTooLarge);
         // assembler should have reset state so a subsequent small valid frame works
         let mut good = Vec::new();
         good.extend_from_slice(&(3u32.to_be_bytes()));
         good.extend_from_slice(b"abc");
-        let slice2 = FrameSlice { packet_number: 0, payload: &good };
+        let slice2 = FrameSlice {
+            packet_number: 0,
+            payload: &good,
+        };
         let ok = assembler.push_slice(slice2).expect("assemble good");
         assert_eq!(ok.unwrap(), b"abc");
     }

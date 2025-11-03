@@ -816,14 +816,12 @@ impl<P: KemProvider> ServerHandshake<P> {
         let server_finished_key = *schedule.finished_key(Perspective::Server);
         let client_finished_key = *schedule.finished_key(Perspective::Client);
 
-        let ticket = self
-            .ticket_manager
-            .issue(
-                schedule.resumption_secret(),
-                self.max_early_data,
-                self.suite,
-                &self.application_context,
-            );
+        let ticket = self.ticket_manager.issue(
+            schedule.resumption_secret(),
+            self.max_early_data,
+            self.suite,
+            &self.application_context,
+        );
 
         let mut server_payload = ServerHelloPayload {
             selected_version: self.suite.protocol_version,
@@ -1114,7 +1112,7 @@ mod tests {
             replay_guard(),
         );
         let result = server
-            .respond(&client_payload, &client_payload_bytes)
+            .respond(&client_payload, &client_payload_bytes, None)
             .expect("server respond");
         let server_payload = result.payload.clone();
         let completion = client.complete(&server_payload).expect("client complete");
@@ -1165,7 +1163,7 @@ mod tests {
             Arc::clone(&guard),
         );
         let server_result1 = server1
-            .respond(&client_payload1, &client_payload_bytes1)
+            .respond(&client_payload1, &client_payload_bytes1, None)
             .expect("server respond");
         let server_payload1 = server_result1.payload.clone();
         let completion1 = client1.complete(&server_payload1).expect("client complete");
@@ -1209,7 +1207,7 @@ mod tests {
             Arc::clone(&guard),
         );
         let server_result2 = server2
-            .respond(&client_payload2, &client_payload_bytes2)
+            .respond(&client_payload2, &client_payload_bytes2, None)
             .expect("server respond 2");
         assert!(server_result2.resumption_accepted);
         let server_payload2 = server_result2.payload.clone();
@@ -1236,7 +1234,7 @@ mod tests {
             Arc::clone(&guard),
         );
         let server_result3 = server3
-            .respond(&client_payload2, &client_payload_bytes2)
+            .respond(&client_payload2, &client_payload_bytes2, None)
             .expect("server respond 3");
         assert!(!server_result3.resumption_accepted);
         assert!(server_result3.early_data.is_none());
@@ -1279,7 +1277,7 @@ mod tests {
             replay_guard(),
         );
         let result = server
-            .respond(&client_payload, &client_payload_bytes)
+            .respond(&client_payload, &client_payload_bytes, None)
             .expect("server respond");
         let server_payload = result.payload.clone();
         let completion = client.complete(&server_payload).expect("client complete");

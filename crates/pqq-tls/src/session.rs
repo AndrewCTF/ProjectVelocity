@@ -147,7 +147,13 @@ impl SessionTicketManager {
         // unencrypted after the nonce so the server can verify AAD during decrypt.
         let ciphertext = self
             .aead
-            .encrypt(nonce, Payload { msg: serialized.as_ref(), aad: ticket_id.as_ref() })
+            .encrypt(
+                nonce,
+                Payload {
+                    msg: serialized.as_ref(),
+                    aad: ticket_id.as_ref(),
+                },
+            )
             .expect("ticket encrypt");
         // wire format: nonce (12) || ticket_id (16) || ciphertext
         let mut payload = Vec::with_capacity(12 + 16 + ciphertext.len());
@@ -170,7 +176,13 @@ impl SessionTicketManager {
         let nonce = Nonce::from_slice(nonce_bytes);
         let plaintext = self
             .aead
-            .decrypt(nonce, Payload { msg: ciphertext, aad: ticket_id_bytes })
+            .decrypt(
+                nonce,
+                Payload {
+                    msg: ciphertext,
+                    aad: ticket_id_bytes,
+                },
+            )
             .map_err(|_| SessionTicketError::Decrypt)?;
         let inner: SessionTicketInner =
             bincode::deserialize(&plaintext).map_err(|_| SessionTicketError::Malformed)?;

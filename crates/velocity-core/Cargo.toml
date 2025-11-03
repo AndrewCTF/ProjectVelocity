@@ -23,6 +23,8 @@ http-body-util = "0.1"
 pqq-core = { path = "../pqq-core" }
 pqq-tls = { path = "../pqq-tls" }
 velocity-edge = { path = "../velocity-edge" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [dev-dependencies]
 hex = "0.4"

@@ -87,7 +87,11 @@ impl InMemoryReplayGuard {
     }
 
     /// Create a guard with explicit limits and binding option.
-    pub fn new_with_options(capacity: usize, per_ticket_limit: usize, bind_peer_on_first_use: bool) -> Self {
+    pub fn new_with_options(
+        capacity: usize,
+        per_ticket_limit: usize,
+        bind_peer_on_first_use: bool,
+    ) -> Self {
         Self {
             inner: Mutex::new(HashMap::new()),
             capacity: capacity.max(16),
@@ -189,7 +193,9 @@ impl ReplayGuard for InMemoryReplayGuard {
             }
         }
         if state.seen.len() >= self.per_ticket_limit {
-            return Err(ReplayError::Storage("per-ticket seen limit exceeded".into()));
+            return Err(ReplayError::Storage(
+                "per-ticket seen limit exceeded".into(),
+            ));
         }
         if !state.seen.insert(digest) {
             return Err(ReplayError::AlreadySeen);

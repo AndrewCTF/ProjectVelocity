@@ -16,6 +16,7 @@ use pqq_tls::{
     SessionCrypto, SessionTicketManager, StaticKemKeyPair,
 };
 use rand::{rngs::OsRng, RngCore};
+use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
@@ -25,6 +26,36 @@ use velocity_edge::{EdgeError, EdgeRequest, EdgeResponse, EdgeResult, ServeRoute
 
 const MAX_HANDSHAKE_LEN: usize = 32 * 1024;
 const HELLO_BODY: &[u8] = b"Hello from Velocity HTTPS preview\n";
+
+#[derive(Serialize)]
+struct HttpsTicketContext {
+    kind: &'static str,
+    security_profile: &'static str,
+    max_early_data: u32,
+    router_enabled: bool,
+}
+
+fn encode_https_ticket_context(
+    profile: SecurityProfile,
+    max_early_data: u32,
+    router_enabled: bool,
+) -> Vec<u8> {
+    let context = HttpsTicketContext {
+        kind: "velocity-https",
+        security_profile: security_profile_label(profile),
+        max_early_data,
+        router_enabled,
+    };
+    serde_json::to_vec(&context).expect("serialize https ticket context")
+}
+
+fn security_profile_label(profile: SecurityProfile) -> &'static str {
+    match profile {
+        SecurityProfile::Turbo => "turbo",
+        SecurityProfile::Balanced => "balanced",
+        SecurityProfile::Fortress => "fortress",
+    }
+}
 
 /// Configuration for the built-in HTTPS listener.
 #[derive(Debug, Clone)]
@@ -172,6 +203,7 @@ struct HttpsState {
     replay_guard: Arc<dyn ReplayGuard>,
     static_keypair: StaticKemKeyPair,
     max_early_data: u32,
+    application_context: Vec<u8>,
     router: Option<ServeRouterHandle>,
 }
 
@@ -205,6 +237,9 @@ impl HttpsState {
         let ticket_manager = Arc::new(SessionTicketManager::new(master_key, ticket_lifetime));
         let replay_guard: Arc<dyn ReplayGuard> = Arc::new(InMemoryReplayGuard::default());
         let max_early_data = profile.max_early_data();
+        let router_enabled = router.is_some();
+        let application_context =
+            encode_https_ticket_context(profile, max_early_data, router_enabled);
 
         Ok(Self {
             suite,
@@ -213,6 +248,7 @@ impl HttpsState {
             replay_guard,
             static_keypair,
             max_early_data,
+            application_context,
             router,
         })
     }
@@ -281,7 +317,7 @@ async fn handshake_and_serve<P: KemProvider + Copy + Send + Sync + 'static>(
     router: Option<ServeRouterHandle>,
     peer: Option<SocketAddr>,
 ) -> Result<(), HttpsError> {
-    let handshake = perform_handshake(&mut stream, &state, kem).await?;
+    let handshake = perform_handshake(&mut stream, &state, kem, peer).await?;
     debug!(
         target: "velocity::https",
         resumption = handshake.resumption_accepted,
@@ -307,6 +343,7 @@ async fn perform_handshake<P: KemProvider + Copy>(
     stream: &mut TcpStream,
     state: &HttpsState,
     kem: P,
+    peer: Option<SocketAddr>,
 ) -> Result<HandshakeSummary, HttpsError> {
     let client_bytes = read_framed_message(stream).await?;
     let client_payload: ClientHelloPayload = cbor_from_slice(&client_bytes)?;
@@ -318,9 +355,11 @@ async fn perform_handshake<P: KemProvider + Copy>(
         state.static_keypair.clone(),
         Arc::clone(&state.replay_guard),
     )
-    .with_max_early_data(state.max_early_data);
+    .with_max_early_data(state.max_early_data)
+    .with_application_context(state.application_context.clone());
 
-    let response = handshake.respond(&client_payload, &client_bytes)?;
+    let peer_bytes = peer.map(|addr| addr.to_string().into_bytes());
+    let response = handshake.respond(&client_payload, &client_bytes, peer_bytes.as_deref())?;
     let server_bytes = cbor_to_vec(&response.payload)?;
     write_framed_message(stream, &server_bytes).await?;
 

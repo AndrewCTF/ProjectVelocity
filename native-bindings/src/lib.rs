@@ -681,9 +681,11 @@ fn global_state() -> &'static GlobalState {
 
 #[no_mangle]
 pub extern "C" fn pqq_init() {
-    INIT.call_once(|| {
-        let _ = tracing_subscriber::fmt::try_init();
-        let _ = global_state();
+    guard_unit(|| {
+        INIT.call_once(|| {
+            let _ = tracing_subscriber::fmt::try_init();
+            let _ = global_state();
+        });
     });
 }
 
@@ -1031,8 +1033,10 @@ fn assign_response(out: *mut *const c_char, payload: &str) {
 /// that allocate strings, and it must not be used again after this call.
 #[no_mangle]
 pub unsafe extern "C" fn pqq_string_free(ptr: *const c_char) {
-    if ptr.is_null() {
-        return;
-    }
-    let _ = CString::from_raw(ptr as *mut c_char);
+    guard_unit(|| unsafe {
+        if ptr.is_null() {
+            return;
+        }
+        let _ = CString::from_raw(ptr as *mut c_char);
+    });
 }

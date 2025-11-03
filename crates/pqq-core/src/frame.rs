@@ -347,7 +347,8 @@ mod tests {
         }
 
         // Try a variety of random-length buffers and ensure decode_frame never panics
-        for len in 0..256usize {
+        // Increase iteration count to exercise more edge cases under CI/fuzzing.
+        for len in 0..1024usize {
             let mut buf = Vec::with_capacity(len);
             for _ in 0..len {
                 buf.push(lcg_next(&mut seed));
@@ -378,8 +379,8 @@ mod tests {
 
         // 4) Feed random payloads into ChunkAssembler and ensure no panic and correct errors
         let mut assembler = ChunkAssembler::new(HANDSHAKE_MESSAGE_MAX);
-        // push a few random payload slices
-        for _ in 0..128 {
+        // push many random payload slices to increase coverage
+        for _ in 0..512 {
             let mut payload = Vec::with_capacity(64);
             for _ in 0..(lcg_next(&mut seed) as usize % 64) {
                 payload.push(lcg_next(&mut seed));
@@ -389,6 +390,30 @@ mod tests {
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| assembler.push_slice(slice)));
             assert!(res.is_ok(), "ChunkAssembler panicked on random payload");
         }
+    }
+
+    #[test]
+    fn assembler_rejects_declared_too_large_immediately() {
+        // Ensure that a frame that claims an excessively large declared length is
+        // rejected and resets the assembler state instead of growing unbounded.
+        let mut assembler = ChunkAssembler::new(128);
+
+        // craft a fake frame payload with a 4-byte length prefix claiming 1000
+        let declared: u32 = 1000;
+        let mut slice_bytes = Vec::new();
+        slice_bytes.extend_from_slice(&declared.to_be_bytes());
+        // no payload bytes follow
+
+        let slice = FrameSlice { packet_number: 0, payload: &slice_bytes };
+        let res = assembler.push_slice(slice).unwrap_err();
+        assert_eq!(res, FrameError::PayloadTooLarge);
+        // assembler should have reset state so a subsequent small valid frame works
+        let mut good = Vec::new();
+        good.extend_from_slice(&(3u32.to_be_bytes()));
+        good.extend_from_slice(b"abc");
+        let slice2 = FrameSlice { packet_number: 0, payload: &good };
+        let ok = assembler.push_slice(slice2).expect("assemble good");
+        assert_eq!(ok.unwrap(), b"abc");
     }
 
     #[test]

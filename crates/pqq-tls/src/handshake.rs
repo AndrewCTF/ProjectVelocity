@@ -663,6 +663,7 @@ struct PendingReplay {
     client_nonce: [u8; CLIENT_NONCE_LEN],
     not_before: SystemTime,
     expires_at: SystemTime,
+    peer_id: Option<Vec<u8>>,
 }
 
 impl PendingReplay {
@@ -670,6 +671,7 @@ impl PendingReplay {
         ReplayToken {
             ticket_id: &self.ticket_id,
             client_nonce: &self.client_nonce,
+            peer_id: self.peer_id.as_deref(),
             not_before: self.not_before,
             expires_at: self.expires_at,
         }
@@ -687,6 +689,7 @@ pub struct ServerHandshake<P: KemProvider> {
     max_early_data: u32,
     pending: Option<ServerPendingState>,
     replay_guard: Arc<dyn ReplayGuard>,
+    application_context: Vec<u8>,
 }
 
 impl<P: KemProvider> ServerHandshake<P> {
@@ -706,6 +709,7 @@ impl<P: KemProvider> ServerHandshake<P> {
             max_early_data: DEFAULT_MAX_EARLY_DATA,
             pending: None,
             replay_guard,
+            application_context: Vec::new(),
         }
     }
 
@@ -714,13 +718,20 @@ impl<P: KemProvider> ServerHandshake<P> {
         self
     }
 
+    pub fn with_application_context(mut self, context: impl Into<Vec<u8>>) -> Self {
+        self.application_context = context.into();
+        self
+    }
+
     pub fn respond(
         &mut self,
         client_payload: &ClientHelloPayload,
         client_raw: &[u8],
+        peer_id: Option<&[u8]>,
     ) -> Result<ServerHandshakeResult, HybridHandshakeError> {
         let mut transcript = Transcript::new();
-        transcript.update(client_raw);
+        peer_id: Option<&[u8]>,
+    ) -> Result<ServerHandshakeResult, HybridHandshakeError> {
 
         let context_bytes = client_payload.encode_without_auth()?;
         let context_digest = sha384_digest(&context_bytes);
@@ -747,17 +758,26 @@ impl<P: KemProvider> ServerHandshake<P> {
                         .as_ref()
                         .map(|d| d.len())
                         .unwrap_or(0);
-                    if ticket.allows_0rtt(SystemTime::now(), early_len).is_ok()
+                    if ticket
+                        .allows_0rtt(
+                            SystemTime::now(),
+                            early_len,
+                            self.suite,
+                            &self.application_context,
+                        )
+                        .is_ok()
                         && ticket.max_early_data >= early_len as u32
                     {
                         resumption_secret = Some(ticket.resumption_secret);
                         if let Some(_early) = client_payload.early_data.as_ref() {
-                            let token = ReplayToken {
-                                ticket_id: &ticket.ticket_id,
-                                client_nonce: &client_payload.client_nonce,
-                                not_before: ticket.not_before,
-                                expires_at: ticket.expires_at,
-                            };
+                            let peer_bytes = peer_id.map(|bytes| bytes.to_vec());
+                                    let token = ReplayToken {
+                                        ticket_id: &ticket.ticket_id,
+                                        client_nonce: &client_payload.client_nonce,
+                                peer_id: peer_bytes.as_deref(),
+                                        not_before: ticket.not_before,
+                                        expires_at: ticket.expires_at,
+                                    };
                             match self.replay_guard.check(token) {
                                 Ok(()) => {
                                     resumption_accepted = true;
@@ -766,11 +786,14 @@ impl<P: KemProvider> ServerHandshake<P> {
                                         client_nonce: client_payload.client_nonce,
                                         not_before: ticket.not_before,
                                         expires_at: ticket.expires_at,
+                                        peer_id: peer_bytes,
                                     });
                                 }
                                 Err(ReplayError::AlreadySeen)
                                 | Err(ReplayError::Expired)
-                                | Err(ReplayError::NotYetValid) => {
+                                | Err(ReplayError::NotYetValid)
+                                | Err(ReplayError::PeerMismatch) => {
+                                    // treat peer mismatch as a non-accepted resumption
                                     resumption_accepted = false;
                                     resumption_secret = None;
                                     pending_replay = None;
@@ -799,7 +822,12 @@ impl<P: KemProvider> ServerHandshake<P> {
 
         let ticket = self
             .ticket_manager
-            .issue(schedule.resumption_secret(), self.max_early_data);
+            .issue(
+                schedule.resumption_secret(),
+                self.max_early_data,
+                self.suite,
+                &self.application_context,
+            );
 
         let mut server_payload = ServerHelloPayload {
             selected_version: self.suite.protocol_version,

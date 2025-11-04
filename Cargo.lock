@@ -1963,12 +1963,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "paste"
-version = "1.0.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
-
-[[package]]
 name = "pem"
 version = "3.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2171,20 +2165,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pqcrypto-mldsa"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9f812cd126a2582599478a434fea75937b4b05d234c64a49e0cea129e130528"
-dependencies = [
- "cc",
- "glob",
- "libc",
- "paste",
- "pqcrypto-internals",
- "pqcrypto-traits",
-]
-
-[[package]]
 name = "pqcrypto-mlkem"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2307,7 +2287,6 @@ dependencies = [
  "cpufeatures",
  "hkdf",
  "hmac",
- "pqcrypto-mldsa",
  "pqcrypto-mlkem",
  "pqcrypto-traits",
  "pqq-core",
@@ -4300,3 +4279,7 @@ dependencies = [
  "quote",
  "syn 2.0.108",
 ]
+
+[[patch.unused]]
+name = "paste"
+version = "1.0.15"

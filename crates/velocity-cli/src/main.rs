@@ -1693,9 +1693,10 @@ fn run_init(args: &InitArgs) -> Result<()> {
 }
 
 fn generate_self_signed_cert(root: &Path, domain: &str) -> Result<SelfSignedMaterial> {
-    let CertifiedKey { cert, key_pair } = generate_simple_self_signed(vec![domain.to_string()])?;
+    let CertifiedKey { cert, signing_key } =
+        generate_simple_self_signed(vec![domain.to_string()])?;
     let cert_pem = cert.pem();
-    let key_pem = key_pair.serialize_pem();
+    let key_pem = signing_key.serialize_pem();
 
     let cert_dir = root.join(".velocity").join("certs");
     fs::create_dir_all(&cert_dir)

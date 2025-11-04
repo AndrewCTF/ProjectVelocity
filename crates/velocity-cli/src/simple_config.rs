@@ -663,7 +663,7 @@ hosts:
                 assert_eq!(proxy.origin, "http://127.0.0.1:3000/");
                 assert!(!proxy.preserve_host);
             }
-            _ => panic!("expected proxy target"),
+            other => panic!("expected proxy target but got {other:?}"),
         }
     }
 }

@@ -10,11 +10,11 @@ use pqq_core::{HandshakeConfig, HandshakeResponse};
 use pqq_easy::{EasyClient, EasyClientConfig, EasyError, EasyServerBuilder, EasyServerHandle};
 use pqq_server::{Request, Response, Server, ServerConfig};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::net::SocketAddr;
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::ptr;
 use std::sync::{Arc, Mutex, MutexGuard, Once};
@@ -55,6 +55,16 @@ impl Default for PqqOwnedSlice {
 }
 
 impl PqqOwnedSlice {
+    /// # Safety
+    ///
+    /// This function is unsafe because it dereferences raw pointers.
+    ///
+    /// ## Safety Invariants:
+    /// - If `data` is non-null, it must point to valid memory of at least `len` bytes
+    /// - The memory pointed to by `data` must remain valid for the lifetime of this call
+    /// - If `release` is Some, it must be a valid function pointer that properly frees the memory
+    /// - The caller must ensure `data` and `len` form a valid slice
+    /// - This function takes ownership of the memory and should only be called once per instance
     unsafe fn into_vec(mut self) -> Result<Vec<u8>, HandlerError> {
         if self.data.is_null() {
             if self.len == 0 {
@@ -62,11 +72,14 @@ impl PqqOwnedSlice {
             }
             return Err(HandlerError::EmptyResponse);
         }
-        let slice = std::slice::from_raw_parts(self.data, self.len);
+        // SAFETY: We've verified data is non-null, and the caller guarantees
+        // that data and len form a valid slice from the FFI boundary
+        let slice = unsafe { std::slice::from_raw_parts(self.data, self.len) };
         let mut out = Vec::with_capacity(slice.len());
         out.extend_from_slice(slice);
         if let Some(release) = self.release {
-            release(self.data, self.len, self.release_ctx);
+            // calling an extern "C" function pointer is unsafe
+            unsafe { release(self.data, self.len, self.release_ctx) };
         }
         self.data = ptr::null();
         self.len = 0;
@@ -76,9 +89,21 @@ impl PqqOwnedSlice {
     }
 }
 
+/// # Safety
+///
+/// This function is an FFI callback to release memory allocated by Rust.
+///
+/// ## Safety Invariants:
+/// - `ctx` must be either null or a valid pointer to a Box<Vec<u8>> previously leaked via Box::into_raw
+/// - This function must only be called once per ctx value
+/// - The memory pointed to by ctx must not be accessed after this function returns
 unsafe extern "C" fn release_vec_buffer(_ptr: *const u8, _len: usize, ctx: *mut c_void) {
     if !ctx.is_null() {
-        let _ = Box::from_raw(ctx as *mut Vec<u8>);
+        // SAFETY: ctx came from Box::into_raw in write_owned_slice, so we can reconstruct the Box
+        // and let it drop, freeing the memory
+        unsafe {
+            let _ = Box::from_raw(ctx as *mut Vec<u8>);
+        }
     }
 }
 
@@ -86,11 +111,14 @@ fn write_owned_slice(out: *mut PqqOwnedSlice, data: Vec<u8>) {
     if out.is_null() {
         return;
     }
+    // SAFETY: We've verified out is non-null. The caller (FFI boundary) guarantees out points
+    // to valid, properly aligned PqqOwnedSlice memory that we have exclusive access to.
     unsafe {
         let mut vec = data;
         let ptr = vec.as_mut_ptr();
         let len = vec.len();
         let boxed = Box::new(vec);
+        // Leak the Box to transfer ownership to C - will be freed by release_vec_buffer
         let raw = Box::into_raw(boxed);
         (*out).data = ptr;
         (*out).len = len;
@@ -190,7 +218,7 @@ fn easy_error_code(err: &EasyError) -> i32 {
 ///
 /// Callers must ensure `slice` points to a valid [`PqqOwnedSlice`] previously
 /// populated by this library. After this call the slice is reset to empty.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn pqq_owned_slice_release(slice: *mut PqqOwnedSlice) {
     guard_unit(|| unsafe {
         if slice.is_null() {
@@ -408,7 +436,7 @@ struct EasyClientRequestConfig {
 /// `config_json` must be a UTF-8 JSON document matching `EasyServerStartConfig`.
 /// `out_response` must point to writable memory for a `PqqOwnedSlice` and will be
 /// populated with an owned JSON payload to free via [`pqq_owned_slice_release`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn pqq_easy_start_server(
     config_json: *const c_char,
     out_response: *mut PqqOwnedSlice,
@@ -490,7 +518,7 @@ pub unsafe extern "C" fn pqq_easy_start_server(
 ///
 /// `config_json` must be UTF-8 JSON matching `EasyClientRequestConfig`. The
 /// returned slice must be released via [`pqq_owned_slice_release`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn pqq_easy_request(
     config_json: *const c_char,
     out_response: *mut PqqOwnedSlice,
@@ -613,7 +641,11 @@ pub unsafe extern "C" fn pqq_easy_request(
                 Err(err) => return respond_with_easy_error(out_response, err),
             },
             other => {
-                return respond_with_error(out_response, -7, &format!("unsupported method {other}"))
+                return respond_with_error(
+                    out_response,
+                    -7,
+                    &format!("unsupported method {other}"),
+                );
             }
         };
 
@@ -673,13 +705,19 @@ fn default_alpns() -> Vec<String> {
 
 fn global_state() -> &'static GlobalState {
     STATE.get_or_init(|| GlobalState {
-        runtime: Runtime::new().expect("tokio runtime"),
+        // SAFETY: Runtime::new() can only fail if:
+        // 1. System resources exhausted (acceptable panic condition)
+        // 2. Thread spawn failure (system-level error)
+        // This is initialization code that runs once; failure here means the system
+        // cannot support async operations and we cannot recover gracefully via FFI.
+        runtime: Runtime::new()
+            .expect("failed to initialize tokio runtime - system resources exhausted"),
         servers: Mutex::new(HashMap::new()),
         easy_servers: Mutex::new(HashMap::new()),
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pqq_init() {
     guard_unit(|| {
         INIT.call_once(|| {
@@ -693,14 +731,14 @@ pub extern "C" fn pqq_init() {
 ///
 /// `config_json` must point to a valid, null-terminated UTF-8 string for the
 /// duration of this call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn pqq_start_server(config_json: *const c_char) -> i32 {
     guard_i32(|| {
         pqq_init();
         if config_json.is_null() {
             return -1;
         }
-        let cfg_str = match CStr::from_ptr(config_json).to_str() {
+        let cfg_str = match unsafe { CStr::from_ptr(config_json) }.to_str() {
             Ok(s) => s,
             Err(_) => return -2,
         };
@@ -776,7 +814,7 @@ pub unsafe extern "C" fn pqq_start_server(config_json: *const c_char) -> i32 {
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pqq_set_handler(
     port: u16,
     callback: HandlerCallback,
@@ -796,7 +834,7 @@ pub extern "C" fn pqq_set_handler(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pqq_clear_handler(port: u16) -> i32 {
     guard_i32(|| {
         pqq_init();
@@ -812,7 +850,7 @@ pub extern "C" fn pqq_clear_handler(port: u16) -> i32 {
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pqq_stop_server(port: u16) -> i32 {
     guard_i32(|| {
         pqq_init();
@@ -865,7 +903,7 @@ pub extern "C" fn pqq_stop_server(port: u16) -> i32 {
 /// duration of this call and that `_out_response` points to writable storage
 /// for a `*const c_char`. The returned pointer must be freed via
 /// [`pqq_string_free`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn pqq_request(
     method: *const c_char,
     url: *const c_char,
@@ -876,23 +914,25 @@ pub unsafe extern "C" fn pqq_request(
         if out_response.is_null() {
             return -1;
         }
-        *out_response = ptr::null();
+        unsafe {
+            *out_response = ptr::null();
+        }
         if method.is_null() || url.is_null() {
             return -1;
         }
 
-        let method = match CStr::from_ptr(method).to_str() {
+        let method = match unsafe { CStr::from_ptr(method) }.to_str() {
             Ok(m) => m.to_uppercase(),
             Err(_) => return -2,
         };
-        let url_str = match CStr::from_ptr(url).to_str() {
+        let url_str = match unsafe { CStr::from_ptr(url) }.to_str() {
             Ok(u) => u,
             Err(_) => return -2,
         };
         let body_str = if body.is_null() {
             ""
         } else {
-            match CStr::from_ptr(body).to_str() {
+            match unsafe { CStr::from_ptr(body) }.to_str() {
                 Ok(b) => b,
                 Err(_) => return -2,
             }
@@ -1023,7 +1063,16 @@ fn assign_response(out: *mut *const c_char, payload: &str) {
         if out.is_null() {
             return;
         }
-        let cstring = CString::new(payload).expect("response cstring");
+        // CString::new() fails only if payload contains interior null bytes.
+        // For valid responses, this should never happen. If it does, we cannot
+        // safely pass the string to C, so we return an empty string.
+        let cstring = match CString::new(payload) {
+            Ok(s) => s,
+            Err(_) => {
+                tracing::error!("response contains interior null byte, returning empty string");
+                CString::new("").expect("empty string is always valid")
+            }
+        };
         *out = cstring.into_raw();
     }
 }
@@ -1032,7 +1081,7 @@ fn assign_response(out: *mut *const c_char, payload: &str) {
 ///
 /// `ptr` must be either null or a pointer returned by Velocity FFI functions
 /// that allocate strings, and it must not be used again after this call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn pqq_string_free(ptr: *const c_char) {
     guard_unit(|| unsafe {
         if ptr.is_null() {

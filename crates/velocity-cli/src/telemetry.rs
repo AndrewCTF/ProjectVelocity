@@ -139,7 +139,13 @@ struct TelemetryInner {
 
 impl TelemetryInner {
     async fn shutdown(&self) -> Result<()> {
-        let server = self.exporter.lock().unwrap().take();
+        // Handle poisoned mutex gracefully - if another thread panicked while holding the lock,
+        // we still want to attempt cleanup
+        let server = self
+            .exporter
+            .lock()
+            .map(|mut guard| guard.take())
+            .unwrap_or_else(|poisoned| poisoned.into_inner().take());
 
         if let Some(mut server) = server {
             server.shutdown().await?;

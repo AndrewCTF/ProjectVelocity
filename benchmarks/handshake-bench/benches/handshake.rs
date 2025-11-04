@@ -12,6 +12,8 @@ use tokio::{
 };
 use tokio_rustls::{rustls, TlsAcceptor, TlsConnector};
 
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
+
 #[derive(Clone)]
 struct PqqCoreHarness {
     driver: Arc<HandshakeDriver>,
@@ -115,22 +117,18 @@ struct HttpsContext {
 impl HttpsContext {
     fn new() -> Result<Self> {
         let cert = rcgen::generate_simple_self_signed(["localhost".into()])?;
-        let cert_der = cert.serialize_der()?;
-        let key_der = cert.serialize_private_key_der();
+        let cert_der = CertificateDer::from(cert.serialize_der()?);
+        let key_der: PrivateKeyDer<'static> =
+            PrivatePkcs8KeyDer::from(cert.serialize_private_key_der()).into();
 
         let mut server_config = rustls::ServerConfig::builder()
-            .with_safe_defaults()
             .with_no_client_auth()
-            .with_single_cert(
-                vec![rustls::Certificate(cert_der.clone())],
-                rustls::PrivateKey(key_der.clone()),
-            )?;
+            .with_single_cert(vec![cert_der.clone()], key_der)?;
         server_config.alpn_protocols.push(b"h3".to_vec());
 
         let mut root_store = rustls::RootCertStore::empty();
-        root_store.add(&rustls::Certificate(cert_der.clone()))?;
+        root_store.add(cert_der.clone())?;
         let mut client_config = rustls::ClientConfig::builder()
-            .with_safe_defaults()
             .with_root_certificates(root_store)
             .with_no_client_auth();
         client_config.alpn_protocols.push(b"h3".to_vec());
@@ -155,7 +153,7 @@ impl HttpsContext {
 
         let client = async move {
             let stream = TcpStream::connect(addr).await?;
-            let server_name = rustls::ServerName::try_from("localhost")
+            let server_name = ServerName::try_from("localhost")
                 .map_err(|_| anyhow::anyhow!("invalid server name"))?;
             connector.connect(server_name, stream).await?;
             Ok::<(), anyhow::Error>(())

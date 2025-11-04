@@ -8,7 +8,6 @@ license = "MIT"
 [features]
 default = ["mlkem"]
 mlkem = ["pqcrypto-mlkem", "pqcrypto-traits"]
-mldsa = ["pqcrypto-mldsa", "pqcrypto-traits"]
 
 [dependencies]
 pqq-core = { path = "../pqq-core" }
@@ -23,7 +22,6 @@ subtle = "2.5"
 hmac = "0.12"
 pqcrypto-mlkem = { version = "0.1.1", optional = true }
 pqcrypto-traits = { version = "0.3.5", optional = true }
-pqcrypto-mldsa = { version = "0.1.2", optional = true }
 chacha20poly1305 = { version = "0.10", features = ["std"] }
 bincode = "1.3"
 aes-gcm = { version = "0.10", features = ["aes"] }

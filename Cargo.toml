@@ -19,3 +19,6 @@ members = [
     "tools/udp-mitm",
 ]
 resolver = "2"
+
+[patch.crates-io]
+paste = { path = "third_party/paste" }

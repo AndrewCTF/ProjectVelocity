@@ -10,11 +10,7 @@ use tokio::{
     runtime::Runtime,
     try_join,
 };
-use tokio_rustls::{
-    rustls,
-    TlsAcceptor,
-    TlsConnector,
-};
+use tokio_rustls::{rustls, TlsAcceptor, TlsConnector};
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
 

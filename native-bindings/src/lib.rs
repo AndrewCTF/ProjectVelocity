@@ -10,11 +10,11 @@ use pqq_core::{HandshakeConfig, HandshakeResponse};
 use pqq_easy::{EasyClient, EasyClientConfig, EasyError, EasyServerBuilder, EasyServerHandle};
 use pqq_server::{Request, Response, Server, ServerConfig};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::net::SocketAddr;
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::ptr;
 use std::sync::{Arc, Mutex, MutexGuard, Once};
@@ -72,9 +72,9 @@ impl PqqOwnedSlice {
             }
             return Err(HandlerError::EmptyResponse);
         }
-    // SAFETY: We've verified data is non-null, and the caller guarantees
-    // that data and len form a valid slice from the FFI boundary
-    let slice = unsafe { std::slice::from_raw_parts(self.data, self.len) };
+        // SAFETY: We've verified data is non-null, and the caller guarantees
+        // that data and len form a valid slice from the FFI boundary
+        let slice = unsafe { std::slice::from_raw_parts(self.data, self.len) };
         let mut out = Vec::with_capacity(slice.len());
         out.extend_from_slice(slice);
         if let Some(release) = self.release {
@@ -101,7 +101,9 @@ unsafe extern "C" fn release_vec_buffer(_ptr: *const u8, _len: usize, ctx: *mut 
     if !ctx.is_null() {
         // SAFETY: ctx came from Box::into_raw in write_owned_slice, so we can reconstruct the Box
         // and let it drop, freeing the memory
-        unsafe { let _ = Box::from_raw(ctx as *mut Vec<u8>); }
+        unsafe {
+            let _ = Box::from_raw(ctx as *mut Vec<u8>);
+        }
     }
 }
 
@@ -639,7 +641,11 @@ pub unsafe extern "C" fn pqq_easy_request(
                 Err(err) => return respond_with_easy_error(out_response, err),
             },
             other => {
-                return respond_with_error(out_response, -7, &format!("unsupported method {other}"))
+                return respond_with_error(
+                    out_response,
+                    -7,
+                    &format!("unsupported method {other}"),
+                );
             }
         };
 
@@ -704,7 +710,8 @@ fn global_state() -> &'static GlobalState {
         // 2. Thread spawn failure (system-level error)
         // This is initialization code that runs once; failure here means the system
         // cannot support async operations and we cannot recover gracefully via FFI.
-        runtime: Runtime::new().expect("failed to initialize tokio runtime - system resources exhausted"),
+        runtime: Runtime::new()
+            .expect("failed to initialize tokio runtime - system resources exhausted"),
         servers: Mutex::new(HashMap::new()),
         easy_servers: Mutex::new(HashMap::new()),
     })
@@ -907,7 +914,9 @@ pub unsafe extern "C" fn pqq_request(
         if out_response.is_null() {
             return -1;
         }
-        unsafe { *out_response = ptr::null(); }
+        unsafe {
+            *out_response = ptr::null();
+        }
         if method.is_null() || url.is_null() {
             return -1;
         }

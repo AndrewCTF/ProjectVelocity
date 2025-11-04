@@ -1,6 +1,9 @@
-use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Nonce as AesNonce};
-use chacha20poly1305::Nonce as ChaChaNonce;
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Nonce as AesNonce,
+};
 use chacha20poly1305::ChaCha20Poly1305;
+use chacha20poly1305::Nonce as ChaChaNonce;
 use std::{env, fmt};
 use thiserror::Error;
 use zeroize::Zeroize;

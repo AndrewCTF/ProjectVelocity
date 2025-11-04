@@ -140,10 +140,10 @@ impl SessionTicketManager {
             context_hash,
         };
         let serialized = bincode::serialize(&inner).expect("ticket serialize");
-    let mut nonce_bytes = [0u8; 12];
-    OsRng.fill_bytes(&mut nonce_bytes);
-    let nonce_for_wire = nonce_bytes;
-    let nonce = Nonce::from(nonce_bytes);
+        let mut nonce_bytes = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce_for_wire = nonce_bytes;
+        let nonce = Nonce::from(nonce_bytes);
         // Encrypt the serialized ticket with the ticket_id as AAD, and include the ticket_id
         // unencrypted after the nonce so the server can verify AAD during decrypt.
         let ciphertext = self
@@ -158,7 +158,7 @@ impl SessionTicketManager {
             .expect("ticket encrypt");
         // wire format: nonce (12) || ticket_id (16) || ciphertext
         let mut payload = Vec::with_capacity(12 + 16 + ciphertext.len());
-    payload.extend_from_slice(&nonce_for_wire);
+        payload.extend_from_slice(&nonce_for_wire);
         payload.extend_from_slice(&ticket_id);
         payload.extend_from_slice(&ciphertext);
         payload

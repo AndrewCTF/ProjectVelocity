@@ -1,8 +1,8 @@
 use std::ffi::CString;
 
 use pqq_native::{
-    pqq_easy_request, pqq_easy_start_server, pqq_init, pqq_owned_slice_release, pqq_stop_server,
-    PqqOwnedSlice,
+    PqqOwnedSlice, pqq_easy_request, pqq_easy_start_server, pqq_init, pqq_owned_slice_release,
+    pqq_stop_server,
 };
 use serde::Deserialize;
 

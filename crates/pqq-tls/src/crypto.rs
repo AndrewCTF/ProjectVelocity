@@ -1,6 +1,8 @@
 use aes_gcm::{
-    aead::{generic_array::GenericArray, Aead, KeyInit as GcmKeyInit},
+    aead::{Aead, KeyInit as GcmKeyInit},
     Aes256Gcm,
+    Key as AesKey,
+    Nonce as AesNonce,
 };
 use chacha20poly1305::Nonce as ChaChaNonce;
 use chacha20poly1305::{ChaCha20Poly1305, Key as ChaChaKey};
@@ -50,7 +52,7 @@ impl AeadImpl {
                 .encrypt(ChaChaNonce::from_slice(nonce), plaintext)
                 .map_err(|_| CryptoError::Encrypt),
             AeadImpl::Aes(cipher) => cipher
-                .encrypt(GenericArray::from_slice(nonce), plaintext)
+                .encrypt(AesNonce::from_slice(nonce), plaintext)
                 .map_err(|_| CryptoError::Encrypt),
         }
     }
@@ -61,7 +63,7 @@ impl AeadImpl {
                 .decrypt(ChaChaNonce::from_slice(nonce), ciphertext)
                 .map_err(|_| CryptoError::Decrypt),
             AeadImpl::Aes(cipher) => cipher
-                .decrypt(GenericArray::from_slice(nonce), ciphertext)
+                .decrypt(AesNonce::from_slice(nonce), ciphertext)
                 .map_err(|_| CryptoError::Decrypt),
         }
     }
@@ -105,17 +107,15 @@ impl SessionCrypto {
         let prefer_aes = prefer_aes_gcm();
 
         let send_aead = if prefer_aes {
-            AeadImpl::Aes(Box::new(Aes256Gcm::new(GenericArray::from_slice(
-                &send_key,
-            ))))
+            let key = AesKey::<Aes256Gcm>::from_slice(&send_key);
+            AeadImpl::Aes(Box::new(Aes256Gcm::new(key)))
         } else {
             AeadImpl::ChaCha(ChaCha20Poly1305::new(ChaChaKey::from_slice(&send_key)))
         };
 
         let recv_aead = if prefer_aes {
-            AeadImpl::Aes(Box::new(Aes256Gcm::new(GenericArray::from_slice(
-                &recv_key,
-            ))))
+            let key = AesKey::<Aes256Gcm>::from_slice(&recv_key);
+            AeadImpl::Aes(Box::new(Aes256Gcm::new(key)))
         } else {
             AeadImpl::ChaCha(ChaCha20Poly1305::new(ChaChaKey::from_slice(&recv_key)))
         };

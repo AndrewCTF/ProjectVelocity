@@ -216,7 +216,7 @@ fn easy_error_code(err: &EasyError) -> i32 {
 ///
 /// Callers must ensure `slice` points to a valid [`PqqOwnedSlice`] previously
 /// populated by this library. After this call the slice is reset to empty.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn pqq_owned_slice_release(slice: *mut PqqOwnedSlice) {
     guard_unit(|| unsafe {
         if slice.is_null() {
@@ -434,7 +434,7 @@ struct EasyClientRequestConfig {
 /// `config_json` must be a UTF-8 JSON document matching `EasyServerStartConfig`.
 /// `out_response` must point to writable memory for a `PqqOwnedSlice` and will be
 /// populated with an owned JSON payload to free via [`pqq_owned_slice_release`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn pqq_easy_start_server(
     config_json: *const c_char,
     out_response: *mut PqqOwnedSlice,
@@ -516,7 +516,7 @@ pub unsafe extern "C" fn pqq_easy_start_server(
 ///
 /// `config_json` must be UTF-8 JSON matching `EasyClientRequestConfig`. The
 /// returned slice must be released via [`pqq_owned_slice_release`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn pqq_easy_request(
     config_json: *const c_char,
     out_response: *mut PqqOwnedSlice,
@@ -710,7 +710,7 @@ fn global_state() -> &'static GlobalState {
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pqq_init() {
     guard_unit(|| {
         INIT.call_once(|| {
@@ -724,7 +724,7 @@ pub extern "C" fn pqq_init() {
 ///
 /// `config_json` must point to a valid, null-terminated UTF-8 string for the
 /// duration of this call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn pqq_start_server(config_json: *const c_char) -> i32 {
     guard_i32(|| {
         pqq_init();
@@ -807,7 +807,7 @@ pub unsafe extern "C" fn pqq_start_server(config_json: *const c_char) -> i32 {
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pqq_set_handler(
     port: u16,
     callback: HandlerCallback,
@@ -827,7 +827,7 @@ pub extern "C" fn pqq_set_handler(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pqq_clear_handler(port: u16) -> i32 {
     guard_i32(|| {
         pqq_init();
@@ -843,7 +843,7 @@ pub extern "C" fn pqq_clear_handler(port: u16) -> i32 {
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn pqq_stop_server(port: u16) -> i32 {
     guard_i32(|| {
         pqq_init();
@@ -896,7 +896,7 @@ pub extern "C" fn pqq_stop_server(port: u16) -> i32 {
 /// duration of this call and that `_out_response` points to writable storage
 /// for a `*const c_char`. The returned pointer must be freed via
 /// [`pqq_string_free`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn pqq_request(
     method: *const c_char,
     url: *const c_char,
@@ -1072,7 +1072,7 @@ fn assign_response(out: *mut *const c_char, payload: &str) {
 ///
 /// `ptr` must be either null or a pointer returned by Velocity FFI functions
 /// that allocate strings, and it must not be used again after this call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn pqq_string_free(ptr: *const c_char) {
     guard_unit(|| unsafe {
         if ptr.is_null() {

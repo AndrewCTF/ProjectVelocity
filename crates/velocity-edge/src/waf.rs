@@ -10,12 +10,17 @@ use crate::{
 };
 
 static DEFAULT_RULES: Lazy<Vec<Regex>> = Lazy::new(|| {
+    // SAFETY: These are compile-time constant regex patterns, tested and known valid.
+    // The unwrap() here is acceptable because:
+    // 1. Patterns are hardcoded and verified
+    // 2. Failure would indicate a programming error caught during development
+    // 3. This runs once at startup, not in request path
     vec![
-        Regex::new(r"(?i)select\\s+.+\\s+from").unwrap(),
-        Regex::new(r"(?i)union\\s+select").unwrap(),
-        Regex::new(r"(?i)<script[>\\s]").unwrap(),
-        Regex::new(r"(?i)onerror=|onload=").unwrap(),
-        Regex::new(r"(?i)\b(drop|alter)\\s+table\b").unwrap(),
+        Regex::new(r"(?i)select\\s+.+\\s+from").expect("WAF regex: SQL SELECT pattern invalid"),
+        Regex::new(r"(?i)union\\s+select").expect("WAF regex: SQL UNION pattern invalid"),
+        Regex::new(r"(?i)<script[>\\s]").expect("WAF regex: XSS script pattern invalid"),
+        Regex::new(r"(?i)onerror=|onload=").expect("WAF regex: XSS event handler pattern invalid"),
+        Regex::new(r"(?i)\b(drop|alter)\\s+table\b").expect("WAF regex: SQL DDL pattern invalid"),
     ]
 });
 

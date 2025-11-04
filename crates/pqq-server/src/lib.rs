@@ -79,6 +79,9 @@ fn encode_server_ticket_context(
         strict_transport,
         publish_kem_public,
     };
+    // SAFETY: ServerTicketContext only contains simple types (strings, numbers, options)
+    // that are always serializable. This can only fail if we run out of memory,
+    // which is a system-level panic condition anyway.
     serde_json::to_vec(&context).expect("serialize ticket context")
 }
 

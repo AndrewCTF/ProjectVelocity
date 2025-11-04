@@ -29,6 +29,11 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Security audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit --deny warnings
+
       - name: Tests (fast)
         # Exclude heavy benchmark or tooling crates that aren't necessary for most CI runs
         run: cargo test --workspace --all-targets --exclude handshake-bench --exclude udp-mitm

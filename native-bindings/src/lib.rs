@@ -55,6 +55,16 @@ impl Default for PqqOwnedSlice {
 }
 
 impl PqqOwnedSlice {
+    /// # Safety
+    ///
+    /// This function is unsafe because it dereferences raw pointers.
+    ///
+    /// ## Safety Invariants:
+    /// - If `data` is non-null, it must point to valid memory of at least `len` bytes
+    /// - The memory pointed to by `data` must remain valid for the lifetime of this call
+    /// - If `release` is Some, it must be a valid function pointer that properly frees the memory
+    /// - The caller must ensure `data` and `len` form a valid slice
+    /// - This function takes ownership of the memory and should only be called once per instance
     unsafe fn into_vec(mut self) -> Result<Vec<u8>, HandlerError> {
         if self.data.is_null() {
             if self.len == 0 {
@@ -62,6 +72,8 @@ impl PqqOwnedSlice {
             }
             return Err(HandlerError::EmptyResponse);
         }
+        // SAFETY: We've verified data is non-null, and the caller guarantees
+        // that data and len form a valid slice from the FFI boundary
         let slice = std::slice::from_raw_parts(self.data, self.len);
         let mut out = Vec::with_capacity(slice.len());
         out.extend_from_slice(slice);
@@ -76,8 +88,18 @@ impl PqqOwnedSlice {
     }
 }
 
+/// # Safety
+///
+/// This function is an FFI callback to release memory allocated by Rust.
+///
+/// ## Safety Invariants:
+/// - `ctx` must be either null or a valid pointer to a Box<Vec<u8>> previously leaked via Box::into_raw
+/// - This function must only be called once per ctx value
+/// - The memory pointed to by ctx must not be accessed after this function returns
 unsafe extern "C" fn release_vec_buffer(_ptr: *const u8, _len: usize, ctx: *mut c_void) {
     if !ctx.is_null() {
+        // SAFETY: ctx came from Box::into_raw in write_owned_slice, so we can reconstruct the Box
+        // and let it drop, freeing the memory
         let _ = Box::from_raw(ctx as *mut Vec<u8>);
     }
 }
@@ -86,11 +108,14 @@ fn write_owned_slice(out: *mut PqqOwnedSlice, data: Vec<u8>) {
     if out.is_null() {
         return;
     }
+    // SAFETY: We've verified out is non-null. The caller (FFI boundary) guarantees out points
+    // to valid, properly aligned PqqOwnedSlice memory that we have exclusive access to.
     unsafe {
         let mut vec = data;
         let ptr = vec.as_mut_ptr();
         let len = vec.len();
         let boxed = Box::new(vec);
+        // Leak the Box to transfer ownership to C - will be freed by release_vec_buffer
         let raw = Box::into_raw(boxed);
         (*out).data = ptr;
         (*out).len = len;
@@ -673,7 +698,12 @@ fn default_alpns() -> Vec<String> {
 
 fn global_state() -> &'static GlobalState {
     STATE.get_or_init(|| GlobalState {
-        runtime: Runtime::new().expect("tokio runtime"),
+        // SAFETY: Runtime::new() can only fail if:
+        // 1. System resources exhausted (acceptable panic condition)
+        // 2. Thread spawn failure (system-level error)
+        // This is initialization code that runs once; failure here means the system
+        // cannot support async operations and we cannot recover gracefully via FFI.
+        runtime: Runtime::new().expect("failed to initialize tokio runtime - system resources exhausted"),
         servers: Mutex::new(HashMap::new()),
         easy_servers: Mutex::new(HashMap::new()),
     })
@@ -1023,7 +1053,16 @@ fn assign_response(out: *mut *const c_char, payload: &str) {
         if out.is_null() {
             return;
         }
-        let cstring = CString::new(payload).expect("response cstring");
+        // CString::new() fails only if payload contains interior null bytes.
+        // For valid responses, this should never happen. If it does, we cannot
+        // safely pass the string to C, so we return an empty string.
+        let cstring = match CString::new(payload) {
+            Ok(s) => s,
+            Err(_) => {
+                tracing::error!("response contains interior null byte, returning empty string");
+                CString::new("").expect("empty string is always valid")
+            }
+        };
         *out = cstring.into_raw();
     }
 }

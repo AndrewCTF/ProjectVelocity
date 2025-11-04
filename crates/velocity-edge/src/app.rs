@@ -435,10 +435,11 @@ fn add_route_from_config(builder: &mut EdgeAppBuilder, route: RouteConfig) -> Ed
                         let mime = mime_guess::from_path(&canonical)
                             .first()
                             .unwrap_or(mime::APPLICATION_OCTET_STREAM);
-                        response.set_header(
-                            CONTENT_TYPE,
-                            HeaderValue::from_str(mime.essence_str()).unwrap(),
-                        );
+                        // SAFETY: mime.essence_str() returns valid HTTP header values (ASCII alphanumeric + /)
+                        // but we handle the error case defensively
+                        if let Ok(header_value) = HeaderValue::from_str(mime.essence_str()) {
+                            response.set_header(CONTENT_TYPE, header_value);
+                        }
                     }
                     apply_headers(&mut response, &headers);
                     response = response.with_body(bytes);

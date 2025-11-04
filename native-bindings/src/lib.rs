@@ -72,13 +72,14 @@ impl PqqOwnedSlice {
             }
             return Err(HandlerError::EmptyResponse);
         }
-        // SAFETY: We've verified data is non-null, and the caller guarantees
-        // that data and len form a valid slice from the FFI boundary
-        let slice = std::slice::from_raw_parts(self.data, self.len);
+    // SAFETY: We've verified data is non-null, and the caller guarantees
+    // that data and len form a valid slice from the FFI boundary
+    let slice = unsafe { std::slice::from_raw_parts(self.data, self.len) };
         let mut out = Vec::with_capacity(slice.len());
         out.extend_from_slice(slice);
         if let Some(release) = self.release {
-            release(self.data, self.len, self.release_ctx);
+            // calling an extern "C" function pointer is unsafe
+            unsafe { release(self.data, self.len, self.release_ctx) };
         }
         self.data = ptr::null();
         self.len = 0;
@@ -100,7 +101,7 @@ unsafe extern "C" fn release_vec_buffer(_ptr: *const u8, _len: usize, ctx: *mut 
     if !ctx.is_null() {
         // SAFETY: ctx came from Box::into_raw in write_owned_slice, so we can reconstruct the Box
         // and let it drop, freeing the memory
-        let _ = Box::from_raw(ctx as *mut Vec<u8>);
+        unsafe { let _ = Box::from_raw(ctx as *mut Vec<u8>); }
     }
 }
 

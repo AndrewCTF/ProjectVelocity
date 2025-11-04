@@ -1,9 +1,4 @@
-use aes_gcm::{
-    aead::{Aead, KeyInit as GcmKeyInit},
-    Aes256Gcm,
-    Key as AesKey,
-    Nonce as AesNonce,
-};
+use aes_gcm::{aead::Aead, Aes256Gcm, Key as AesKey, Nonce as AesNonce};
 use chacha20poly1305::Nonce as ChaChaNonce;
 use chacha20poly1305::{ChaCha20Poly1305, Key as ChaChaKey};
 use std::{env, fmt};

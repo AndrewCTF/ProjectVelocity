@@ -8,6 +8,7 @@ license = "MIT"
 [features]
 default = ["mlkem"]
 mlkem = ["pqcrypto-mlkem", "pqcrypto-traits"]
+mldsa = []
 
 [dependencies]
 pqq-core = { path = "../pqq-core" }

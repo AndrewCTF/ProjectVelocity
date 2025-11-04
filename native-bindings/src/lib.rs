@@ -731,7 +731,7 @@ pub unsafe extern "C" fn pqq_start_server(config_json: *const c_char) -> i32 {
         if config_json.is_null() {
             return -1;
         }
-        let cfg_str = match CStr::from_ptr(config_json).to_str() {
+        let cfg_str = match unsafe { CStr::from_ptr(config_json) }.to_str() {
             Ok(s) => s,
             Err(_) => return -2,
         };
@@ -907,23 +907,23 @@ pub unsafe extern "C" fn pqq_request(
         if out_response.is_null() {
             return -1;
         }
-        *out_response = ptr::null();
+        unsafe { *out_response = ptr::null(); }
         if method.is_null() || url.is_null() {
             return -1;
         }
 
-        let method = match CStr::from_ptr(method).to_str() {
+        let method = match unsafe { CStr::from_ptr(method) }.to_str() {
             Ok(m) => m.to_uppercase(),
             Err(_) => return -2,
         };
-        let url_str = match CStr::from_ptr(url).to_str() {
+        let url_str = match unsafe { CStr::from_ptr(url) }.to_str() {
             Ok(u) => u,
             Err(_) => return -2,
         };
         let body_str = if body.is_null() {
             ""
         } else {
-            match CStr::from_ptr(body).to_str() {
+            match unsafe { CStr::from_ptr(body) }.to_str() {
                 Ok(b) => b,
                 Err(_) => return -2,
             }

@@ -103,7 +103,7 @@ pub struct SessionTicketManager {
 impl SessionTicketManager {
     pub fn new(master_key: [u8; 32], lifetime: Duration) -> Self {
         Self {
-            aead: ChaCha20Poly1305::new(Key::from_slice(&master_key)),
+            aead: ChaCha20Poly1305::new(&Key::from(master_key)),
             lifetime,
             early_data_delay: Duration::from_millis(5),
         }
@@ -142,13 +142,13 @@ impl SessionTicketManager {
         let serialized = bincode::serialize(&inner).expect("ticket serialize");
         let mut nonce_bytes = [0u8; 12];
         OsRng.fill_bytes(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::from(nonce_bytes);
         // Encrypt the serialized ticket with the ticket_id as AAD, and include the ticket_id
         // unencrypted after the nonce so the server can verify AAD during decrypt.
         let ciphertext = self
             .aead
             .encrypt(
-                nonce,
+                &nonce,
                 Payload {
                     msg: serialized.as_ref(),
                     aad: ticket_id.as_ref(),
@@ -157,7 +157,7 @@ impl SessionTicketManager {
             .expect("ticket encrypt");
         // wire format: nonce (12) || ticket_id (16) || ciphertext
         let mut payload = Vec::with_capacity(12 + 16 + ciphertext.len());
-        payload.extend_from_slice(&nonce_bytes);
+        payload.extend_from_slice(nonce.as_slice());
         payload.extend_from_slice(&ticket_id);
         payload.extend_from_slice(&ciphertext);
         payload
@@ -173,11 +173,13 @@ impl SessionTicketManager {
             return Err(SessionTicketError::Malformed);
         }
         let (ticket_id_bytes, ciphertext) = rest.split_at(16);
-        let nonce = Nonce::from_slice(nonce_bytes);
+        let mut nonce_array = [0u8; 12];
+        nonce_array.copy_from_slice(nonce_bytes);
+        let nonce = Nonce::from(nonce_array);
         let plaintext = self
             .aead
             .decrypt(
-                nonce,
+                &nonce,
                 Payload {
                     msg: ciphertext,
                     aad: ticket_id_bytes,

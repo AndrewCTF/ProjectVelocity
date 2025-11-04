@@ -1,6 +1,6 @@
-use aes_gcm::{aead::Aead, Aes256Gcm, Key as AesKey, Nonce as AesNonce};
+use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Nonce as AesNonce};
 use chacha20poly1305::Nonce as ChaChaNonce;
-use chacha20poly1305::{ChaCha20Poly1305, Key as ChaChaKey};
+use chacha20poly1305::ChaCha20Poly1305;
 use std::{env, fmt};
 use thiserror::Error;
 use zeroize::Zeroize;
@@ -33,6 +33,8 @@ pub enum CryptoError {
     Encrypt,
     #[error("failed to decrypt payload with session AEAD")]
     Decrypt,
+    #[error("invalid key material for session AEAD")]
+    KeyInit,
 }
 
 enum AeadImpl {
@@ -43,23 +45,35 @@ enum AeadImpl {
 impl AeadImpl {
     fn encrypt(&self, nonce: &[u8; 12], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
         match self {
-            AeadImpl::ChaCha(cipher) => cipher
-                .encrypt(ChaChaNonce::from_slice(nonce), plaintext)
-                .map_err(|_| CryptoError::Encrypt),
-            AeadImpl::Aes(cipher) => cipher
-                .encrypt(AesNonce::from_slice(nonce), plaintext)
-                .map_err(|_| CryptoError::Encrypt),
+            AeadImpl::ChaCha(cipher) => {
+                let nonce_value = ChaChaNonce::from(*nonce);
+                cipher
+                    .encrypt(&nonce_value, plaintext)
+                    .map_err(|_| CryptoError::Encrypt)
+            }
+            AeadImpl::Aes(cipher) => {
+                let nonce_value = AesNonce::from(*nonce);
+                cipher
+                    .encrypt(&nonce_value, plaintext)
+                    .map_err(|_| CryptoError::Encrypt)
+            }
         }
     }
 
     fn decrypt(&self, nonce: &[u8; 12], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
         match self {
-            AeadImpl::ChaCha(cipher) => cipher
-                .decrypt(ChaChaNonce::from_slice(nonce), ciphertext)
-                .map_err(|_| CryptoError::Decrypt),
-            AeadImpl::Aes(cipher) => cipher
-                .decrypt(AesNonce::from_slice(nonce), ciphertext)
-                .map_err(|_| CryptoError::Decrypt),
+            AeadImpl::ChaCha(cipher) => {
+                let nonce_value = ChaChaNonce::from(*nonce);
+                cipher
+                    .decrypt(&nonce_value, ciphertext)
+                    .map_err(|_| CryptoError::Decrypt)
+            }
+            AeadImpl::Aes(cipher) => {
+                let nonce_value = AesNonce::from(*nonce);
+                cipher
+                    .decrypt(&nonce_value, ciphertext)
+                    .map_err(|_| CryptoError::Decrypt)
+            }
         }
     }
 
@@ -102,17 +116,21 @@ impl SessionCrypto {
         let prefer_aes = prefer_aes_gcm();
 
         let send_aead = if prefer_aes {
-            let key = AesKey::<Aes256Gcm>::from_slice(&send_key);
-            AeadImpl::Aes(Box::new(Aes256Gcm::new(key)))
+            let cipher = Aes256Gcm::new_from_slice(&send_key).map_err(|_| CryptoError::KeyInit)?;
+            AeadImpl::Aes(Box::new(cipher))
         } else {
-            AeadImpl::ChaCha(ChaCha20Poly1305::new(ChaChaKey::from_slice(&send_key)))
+            let cipher =
+                ChaCha20Poly1305::new_from_slice(&send_key).map_err(|_| CryptoError::KeyInit)?;
+            AeadImpl::ChaCha(cipher)
         };
 
         let recv_aead = if prefer_aes {
-            let key = AesKey::<Aes256Gcm>::from_slice(&recv_key);
-            AeadImpl::Aes(Box::new(Aes256Gcm::new(key)))
+            let cipher = Aes256Gcm::new_from_slice(&recv_key).map_err(|_| CryptoError::KeyInit)?;
+            AeadImpl::Aes(Box::new(cipher))
         } else {
-            AeadImpl::ChaCha(ChaCha20Poly1305::new(ChaChaKey::from_slice(&recv_key)))
+            let cipher =
+                ChaCha20Poly1305::new_from_slice(&recv_key).map_err(|_| CryptoError::KeyInit)?;
+            AeadImpl::ChaCha(cipher)
         };
 
         keys.zeroize();

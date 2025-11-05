@@ -56,9 +56,9 @@ cargo clippy -p velocity-core --all-targets -- -D warnings
 
 cargo test -p velocity-core- `benchmarks/plan.md` – reproducible benchmark plan covering UDP handshake| `native-bindings/` | C ABI exposing `pqq_init`, `pqq_start_server`, `pqq_request` for embedding in Nginx, Apache, and custom stacks. |
 
-```
 
-  latency, throughput, and page-load experiments.| `spec/` | RFC-style Velocity/1 specification + byte-accurate transcript. |
+
+latency, throughput, and page-load experiments.| `spec/` | RFC-style Velocity/1 specification + byte-accurate transcript. |
 
 All commands assume the Rust toolchain pinned in `rust-toolchain.toml`
 

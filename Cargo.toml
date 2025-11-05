@@ -1,5 +1,6 @@
 [workspace]
 members = [
     "crates/velocity-core",
+    "benchmarks/handshake-bench",
 ]
 resolver = "2"

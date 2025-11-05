@@ -32,15 +32,24 @@ jobs:
           rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu || true
 
       - name: Build release (x86_64)
-        run: cargo build --release --target x86_64-unknown-linux-gnu
+        run: |
+          cargo build --release -p velocity-cli --target x86_64-unknown-linux-gnu
+          echo "LS target/x86_64-unknown-linux-gnu/release:" && ls -la target/x86_64-unknown-linux-gnu/release || true
 
       - name: Build release (aarch64)
-        run: cargo build --release --target aarch64-unknown-linux-gnu || true
+        run: |
+          # Use cross when available for cross-arch linking; try native cargo build as fallback
+          if command -v cross >/dev/null 2>&1; then
+            cross build --release -p velocity-cli --target aarch64-unknown-linux-gnu || true
+          else
+            cargo build --release -p velocity-cli --target aarch64-unknown-linux-gnu || true
+          fi
+          echo "LS target/aarch64-unknown-linux-gnu/release:" && ls -la target/aarch64-unknown-linux-gnu/release || true
 
       - name: Create .deb using cargo-deb
         run: |
-          # cargo-deb will infer metadata from Cargo.toml; you can add [package.metadata.deb] to customize
-          cargo deb --target x86_64-unknown-linux-gnu --no-build || cargo deb --no-build
+          # cargo-deb uses package metadata; target and package (-p) specified to ensure correct crate
+          cargo deb -p velocity-cli --target x86_64-unknown-linux-gnu --no-build || cargo deb -p velocity-cli --no-build
         continue-on-error: false
 
       - name: Create AppImage
@@ -63,8 +72,17 @@ jobs:
       - name: Pack tar.gz and upload artifacts
         run: |-
           mkdir -p dist
-          cp target/x86_64-unknown-linux-gnu/release/velocity dist/velocity-x86_64 || cp target/release/velocity dist/velocity-x86_64
-          cp target/aarch64-unknown-linux-gnu/release/velocity dist/velocity-aarch64 || true
+          # prefer explicit crate-built binaries
+          if [ -f "target/x86_64-unknown-linux-gnu/release/velocity" ]; then
+            cp target/x86_64-unknown-linux-gnu/release/velocity dist/velocity-x86_64
+          elif [ -f "target/release/velocity" ]; then
+            cp target/release/velocity dist/velocity-x86_64
+          else
+            echo "Warning: linux binary not found"
+          fi
+          if [ -f "target/aarch64-unknown-linux-gnu/release/velocity" ]; then
+            cp target/aarch64-unknown-linux-gnu/release/velocity dist/velocity-aarch64
+          fi
           if [ -f "velocity.AppImage" ]; then cp velocity.AppImage dist/; fi || true
           if [ -d "target/debian" ]; then cp target/debian/*.deb dist/ || true; fi
           tar -czf dist/velocity-linux-${{ github.ref_name }}-x86_64.tar.gz -C dist velocity-x86_64 || true
@@ -87,12 +105,21 @@ jobs:
           toolchain: stable
           override: true
       - name: Build release
-        run: cargo build --release --target x86_64-pc-windows-msvc
-      - name: Package zip
+        shell: pwsh
         run: |
-          mkdir -p dist
-          cp target\x86_64-pc-windows-msvc\release\velocity.exe dist\ || cp target\release\velocity.exe dist\
-          powershell -Command "Compress-Archive -Path dist\* -DestinationPath velocity-windows-${{ github.ref_name }}.zip"
+          cargo build --release -p velocity-cli --target x86_64-pc-windows-msvc
+          Write-Output "Listing target\x86_64-pc-windows-msvc\release"
+          Get-ChildItem -Path target\x86_64-pc-windows-msvc\release -Force -ErrorAction SilentlyContinue | Write-Output
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $src = Join-Path "target" "x86_64-pc-windows-msvc\release\velocity.exe"
+          if (-Not (Test-Path $src)) { $src = Join-Path "target" "release\velocity.exe" }
+          if (-Not (Test-Path $src)) { Write-Error "Windows binary not found at $src"; exit 1 }
+          Copy-Item -Path $src -Destination dist -Force
+          Compress-Archive -Path (Join-Path "dist" "*") -DestinationPath "velocity-windows-${{ github.ref_name }}.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: windows-packages
@@ -112,11 +139,20 @@ jobs:
       - name: Add target (universal builds optional)
         run: rustup target add x86_64-apple-darwin || true
       - name: Build release
-        run: cargo build --release --target x86_64-apple-darwin || cargo build --release
-      - name: Package tar.gz
         run: |
+          cargo build --release -p velocity-cli --target x86_64-apple-darwin || cargo build --release -p velocity-cli
+          echo "Listing target/x86_64-apple-darwin/release:" && ls -la target/x86_64-apple-darwin/release || true
+      - name: Package tar.gz
+        run: |-
           mkdir -p dist
-          cp target/x86_64-apple-darwin/release/velocity dist/ || cp target/release/velocity dist/
+          if [ -f "target/x86_64-apple-darwin/release/velocity" ]; then
+            cp target/x86_64-apple-darwin/release/velocity dist/
+          elif [ -f "target/release/velocity" ]; then
+            cp target/release/velocity dist/
+          else
+            echo "macOS binary not found"
+            exit 1
+          fi
           tar -czf velocity-macos-${{ github.ref_name }}-x86_64.tar.gz -C dist velocity
       - uses: actions/upload-artifact@v4
         with:

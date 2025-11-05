@@ -1,0 +1,26 @@
+[package]
+name = "handshake-bench"
+version = "0.2.0"
+edition = "2021"
+authors = ["VELO Project Developers"]
+description = "Criterion benchmarks for PQ-QUIC handshake negotiation stubs"
+license = "MIT"
+
+[dependencies]
+criterion = { version = "0.5", features = ["async_tokio"] }
+pqq-core = { path = "../../crates/pqq-core" }
+pqq-client = { path = "../../crates/pqq-client" }
+pqq-server = { path = "../../crates/pqq-server" }
+tokio = { version = "1.38", features = ["macros", "rt-multi-thread", "net", "sync", "time"] }
+# Updated from 0.23 to 0.26 to fix RUSTSEC-2024-0336 (rustls infinite loop) and RUSTSEC-2025-0009 (ring AES panic)
+# Use ring crypto backend instead of aws-lc-rs to avoid CMake dependency
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+rcgen = "0.12"
+anyhow = "1.0"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "handshake"
+harness = false

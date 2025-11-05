@@ -1,6 +1,0 @@
-scenario,point_estimate_ns,lower_ns,upper_ns
-pqq-supported,81.185,80.936,81.466
-fallback-h3,149.50,149.03,150.03
-pqq-udp-supported,67912.0,67210.0,68694.0
-fallback-h3-udp,67551.0,66132.0,69959.0
-https-tls13,851210.0,757430.0,964530.0

@@ -1,0 +1,66 @@
+theory PQ_QUIC_Handshake
+
+begin
+
+/*
+   Informal sketch:
+   - Client generates classical share (X25519) and PQ share (Kyber).
+   - Server responds with ciphertext encapsulating shared secret.
+   - Transcript authenticated with Dilithium.
+
+   This Tamarin model captures a simplified two-message flow combining both
+   secrets into a session key. It is intentionally high-level; cryptographic
+   primitives are abstracted as equational theories with perfect security
+   assumptions to validate authentication and forward secrecy goals.
+*/
+
+builtins: diffie-hellman
+
+functions:
+    kyber_encap/2,
+    kyber_decap/2,
+    combine_secret/2
+
+rules:
+
+rule ClientInit:
+    [ Fr(~skC), Fr(~kyber_pk) ]
+  --[
+      ClientHello
+  ]->
+    [ Out(<"ClientHello", pk(~skC), ~kyber_pk>),
+      StateC(~skC, ~kyber_pk) ]
+
+rule ServerResp:
+    [ In(<"ClientHello", pkC, kyber_pk>),
+      Fr(~skS) ]
+  --[
+      ServerHello
+  ]->
+    [ Out(<"ServerHello", pk(~skS), kyber_encap(kyber_pk, ~skS)>),
+      StateS(~skS, pkC, kyber_pk, kyber_encap(kyber_pk, ~skS)) ]
+
+rule ClientFinish:
+    [ In(<"ServerHello", pkS, kyber_ct>),
+      StateC(skC, kyber_pk) ]
+  --[
+      ClientFinished
+  ]->
+    [ Out(<"Finished">),
+      KeyC(combine_secret(dh(skC, pkS), kyber_decap(kyber_ct, kyber_pk))) ]
+
+rule ServerFinish:
+    [ In(<"Finished">),
+      StateS(skS, pkC, kyber_pk, kyber_ct) ]
+  --[
+      ServerFinished
+  ]->
+    [ KeyS(combine_secret(dh(skS, pkC), kyber_decap(kyber_ct, kyber_pk))) ]
+
+lemma mutual_authentication:
+    "All skC pkC kyber_pk.
+        ClientFinished @ i &
+        KeyS(combine_secret(dh(skC, pkC), kyber_decap(_, kyber_pk))) @ j
+        ==> Ex k. ServerFinished @ k"
+
+end

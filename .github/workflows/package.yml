@@ -1,0 +1,185 @@
+name: multi-platform-packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    name: Build Linux artifacts (.deb, AppImage, tar.gz)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Install deps for packaging
+        run: |-
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev curl gzip xz-utils tar
+          cargo install cargo-deb --locked || true
+
+      - name: Add targets
+        run: |
+          rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu || true
+
+      - name: Build release (x86_64)
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Build release (aarch64)
+        run: cargo build --release --target aarch64-unknown-linux-gnu || true
+
+      - name: Create .deb using cargo-deb
+        run: |
+          # cargo-deb will infer metadata from Cargo.toml; you can add [package.metadata.deb] to customize
+          cargo deb --target x86_64-unknown-linux-gnu --no-build || cargo deb --no-build
+        continue-on-error: false
+
+      - name: Create AppImage
+        run: |-
+          set -e
+          mkdir -p appdir/usr/bin
+          cp target/x86_64-unknown-linux-gnu/release/velocity appdir/usr/bin/ || cp target/release/velocity appdir/usr/bin/
+          # minimal desktop file
+          mkdir -p appdir/usr/share/applications
+          printf '%s\n' '[Desktop Entry]' 'Name=Velocity' 'Exec=velocity' 'Type=Application' 'Categories=Network;Internet;' > appdir/usr/share/applications/velocity.desktop
+          # download linuxdeploy and appimagetool
+          curl -sSL -o linuxdeploy-x86_64.AppImage "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
+          chmod +x linuxdeploy-x86_64.AppImage
+          curl -sSL -o appimagetool-x86_64.AppImage "https://github.com/AppImage/AppImageKit/releases/latest/download/appimagetool-x86_64.AppImage"
+          chmod +x appimagetool-x86_64.AppImage
+          # create AppImage (linuxdeploy will bundle runtime libs)
+          ./linuxdeploy-x86_64.AppImage --appdir appdir --output appimage || true
+          if ls velocity-*.AppImage 1> /dev/null 2>&1; then mv velocity-*.AppImage velocity.AppImage; fi || true
+
+      - name: Pack tar.gz and upload artifacts
+        run: |-
+          mkdir -p dist
+          cp target/x86_64-unknown-linux-gnu/release/velocity dist/velocity-x86_64 || cp target/release/velocity dist/velocity-x86_64
+          cp target/aarch64-unknown-linux-gnu/release/velocity dist/velocity-aarch64 || true
+          if [ -f "velocity.AppImage" ]; then cp velocity.AppImage dist/; fi || true
+          if [ -d "target/debian" ]; then cp target/debian/*.deb dist/ || true; fi
+          tar -czf dist/velocity-linux-${{ github.ref_name }}-x86_64.tar.gz -C dist velocity-x86_64 || true
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: dist
+
+  build-windows:
+    name: Build Windows artifacts (zip)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: Build release
+        run: cargo build --release --target x86_64-pc-windows-msvc
+      - name: Package zip
+        run: |
+          mkdir -p dist
+          cp target\x86_64-pc-windows-msvc\release\velocity.exe dist\ || cp target\release\velocity.exe dist\
+          powershell -Command "Compress-Archive -Path dist\* -DestinationPath velocity-windows-${{ github.ref_name }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-packages
+          path: velocity-windows-${{ github.ref_name }}.zip
+
+  build-macos:
+    name: Build macOS artifacts (tar.gz)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: Add target (universal builds optional)
+        run: rustup target add x86_64-apple-darwin || true
+      - name: Build release
+        run: cargo build --release --target x86_64-apple-darwin || cargo build --release
+      - name: Package tar.gz
+        run: |
+          mkdir -p dist
+          cp target/x86_64-apple-darwin/release/velocity dist/ || cp target/release/velocity dist/
+          tar -czf velocity-macos-${{ github.ref_name }}-x86_64.tar.gz -C dist velocity
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-packages
+          path: velocity-macos-${{ github.ref_name }}-x86_64.tar.gz
+
+  generate-arch-pkg:
+    name: Generate PKGBUILD + .SRCINFO for Arch/AUR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create PKGBUILD and SRCINFO
+        run: ./.github/scripts/generate_pkgbuild.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch-pkg-files
+          path: pkg/arch
+
+  publish-release:
+    name: Publish Release
+    needs: [build-linux, build-windows, build-macos, generate-arch-pkg]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-packages
+          path: release-artifacts/linux
+
+      - name: Download windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-packages
+          path: release-artifacts/windows
+
+      - name: Download macos artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-packages
+          path: release-artifacts/macos
+
+      - name: Download arch pkg files
+        uses: actions/download-artifact@v4
+        with:
+          name: arch-pkg-files
+          path: release-artifacts/arch
+
+      - name: Create GitHub Release and upload assets
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload assets to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release-artifacts/linux/*
+            release-artifacts/windows/*
+            release-artifacts/macos/*
+            release-artifacts/arch/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

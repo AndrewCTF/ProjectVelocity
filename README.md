@@ -68,7 +68,7 @@ All commands assume the Rust toolchain pinned in `rust-toolchain.toml`
 
 ## Documentation  without disrupting user workflows.| `benchmarks/` | Criterion harnesses, page-load simulations, AF_XDP optional fast-path harness. |
 
-
+Documentation: https://docs.projectvelocity.org/
 
 Comprehensive documentation lives under `docs/`:| `formal/` | Tamarin/ProVerif models capturing mutual auth, forward secrecy, and downgrade resistance. |
 

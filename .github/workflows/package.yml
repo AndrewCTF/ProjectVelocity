@@ -33,23 +33,23 @@ jobs:
 
       - name: Build release (x86_64)
         run: |
-          cargo build --release -p velocity-cli --target x86_64-unknown-linux-gnu
+          cargo build --manifest-path crates/velocity-cli/Cargo.toml --release --target x86_64-unknown-linux-gnu
           echo "LS target/x86_64-unknown-linux-gnu/release:" && ls -la target/x86_64-unknown-linux-gnu/release || true
 
       - name: Build release (aarch64)
         run: |
           # Use cross when available for cross-arch linking; try native cargo build as fallback
           if command -v cross >/dev/null 2>&1; then
-            cross build --release -p velocity-cli --target aarch64-unknown-linux-gnu || true
+            cross build --manifest-path crates/velocity-cli/Cargo.toml --release --target aarch64-unknown-linux-gnu || true
           else
-            cargo build --release -p velocity-cli --target aarch64-unknown-linux-gnu || true
+            cargo build --manifest-path crates/velocity-cli/Cargo.toml --release --target aarch64-unknown-linux-gnu || true
           fi
           echo "LS target/aarch64-unknown-linux-gnu/release:" && ls -la target/aarch64-unknown-linux-gnu/release || true
 
       - name: Create .deb using cargo-deb
         run: |
           # cargo-deb uses package metadata; target and package (-p) specified to ensure correct crate
-          cargo deb -p velocity-cli --target x86_64-unknown-linux-gnu --no-build || cargo deb -p velocity-cli --no-build
+          cargo deb --manifest-path crates/velocity-cli/Cargo.toml --target x86_64-unknown-linux-gnu --no-build || cargo deb --manifest-path crates/velocity-cli/Cargo.toml --no-build
         continue-on-error: false
 
       - name: Create AppImage
@@ -107,7 +107,7 @@ jobs:
       - name: Build release
         shell: pwsh
         run: |
-          cargo build --release -p velocity-cli --target x86_64-pc-windows-msvc
+          cargo build --manifest-path crates/velocity-cli/Cargo.toml --release --target x86_64-pc-windows-msvc
           Write-Output "Listing target\x86_64-pc-windows-msvc\release"
           Get-ChildItem -Path target\x86_64-pc-windows-msvc\release -Force -ErrorAction SilentlyContinue | Write-Output
 
@@ -140,7 +140,7 @@ jobs:
         run: rustup target add x86_64-apple-darwin || true
       - name: Build release
         run: |
-          cargo build --release -p velocity-cli --target x86_64-apple-darwin || cargo build --release -p velocity-cli
+          cargo build --manifest-path crates/velocity-cli/Cargo.toml --release --target x86_64-apple-darwin || cargo build --manifest-path crates/velocity-cli/Cargo.toml --release
           echo "Listing target/x86_64-apple-darwin/release:" && ls -la target/x86_64-apple-darwin/release || true
       - name: Package tar.gz
         run: |-

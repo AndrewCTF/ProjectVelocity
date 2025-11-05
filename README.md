@@ -1,64 +1,126 @@
-# Velocity Protocol Reference Skeleton# Velocity Reference Stack
-
-# Velocity — Post-Quantum Web Transport Reference Stack
-
-Velocity is a post-quantum successor to TLS 1.3 + QUIC. This repository snapshot
-
-captures the initial scaffolding required to draft the `velocity/1` protocol andVelocity is a production-grade, post-quantum successor to TLS 1.3 + QUIC. The stack delivers a UDP-based secure transport with hybrid cryptography (X25519 + Kyber, Dilithium + classical signatures), graceful fallback to HTTP/3, and a batteries-included developer experience. This repository houses the reference implementation, documentation, formal artifacts, and tooling required to evaluate and deploy Velocity/1 (`ALPN velocity/1`).
-
-ship a minimal Rust implementation for packet parsing, ALPN negotiation, and
-
-handshake experimentation.## What’s inside
+# Velocity Reference Stack
 
 
 
-## Repository layout| Area | Highlights |
+Velocity is the reference implementation of a post-quantum secure transport# Velocity — Post-Quantum Web Transport Reference Stack
 
-|------|------------|
+intended to succeed TLS 1.3 + QUIC. This repository snapshot focuses on the
+
+foundational pieces required to iterate on the `velocity/1` specification: aVelocity is a post-quantum successor to TLS 1.3 + QUIC. This repository snapshot
+
+minimal Rust crate for packet parsing and ALPN negotiation, a working protocol
+
+draft, and supporting documentation.captures the initial scaffolding required to draft the `velocity/1` protocol andVelocity is a production-grade, post-quantum successor to TLS 1.3 + QUIC. The stack delivers a UDP-based secure transport with hybrid cryptography (X25519 + Kyber, Dilithium + classical signatures), graceful fallback to HTTP/3, and a batteries-included developer experience. This repository houses the reference implementation, documentation, formal artifacts, and tooling required to evaluate and deploy Velocity/1 (`ALPN velocity/1`).
+
+
+
+## Current Scopeship a minimal Rust implementation for packet parsing, ALPN negotiation, and
+
+
+
+- `crates/velocity-core/` — UDP handshake loop, packet header parsing, ALPNhandshake experimentation.## What’s inside
+
+  helpers, and accompanying unit tests.
+
+- `spec/protocol-draft.md` — living RFC-style document describing the handshake,
+
+  hybrid cryptography profiles, fallback strategy, and SSH transport mapping.
+
+- `docs/` — documentation hub containing a quick start guide, repository map,## Repository layout| Area | Highlights |
+
+  benchmarking notes, and migration summaries.
+
+- `benchmarks/handshake-bench/` — Criterion harness scaffold for future|------|------------|
+
+  handshake performance measurements.
 
 - `Cargo.toml` – Cargo workspace root (currently only builds `crates/velocity-core`).| `crates/velocity-core` | QUIC-inspired transport core: packet parsing, congestion hooks, stream mux, connection migration. |
 
-- `crates/velocity-core/` – minimal UDP loop, packet framing, and ALPN helpers with| `crates/velocity-crypto` | Hybrid handshake engine, key schedule, certificate validation, ticket issuance, padding policy enforcement. |
+Additional directories (e.g., `native-bindings/`, `examples/`) remain as
 
-  unit tests.| `crates/velocity-server` | HTTP-native server facade with Axum-compatible handlers, static site glue, reverse proxy engine, observability hooks. |
+placeholders for upcoming milestones outlined in `ROADMAP.md`.- `crates/velocity-core/` – minimal UDP loop, packet framing, and ALPN helpers with| `crates/velocity-crypto` | Hybrid handshake engine, key schedule, certificate validation, ticket issuance, padding policy enforcement. |
 
-- `spec/protocol-draft.md` – RFC-style draft describing handshake flow, packet| `crates/velocity-client` | Client SDK & CLI with sync/async APIs, fallback orchestration, cookie/JAR support, 0-RTT guardrails. |
 
-  formats, fallback behaviour, and SSH transport mapping.| `crates/velocity-ssh-bridge` | Transport adapter mapping Velocity streams onto SSH semantics (vshd, vsh-proxy, agent forwarding). |
 
-- `benchmarks/plan.md` – reproducible benchmark plan covering UDP handshake| `native-bindings/` | C ABI exposing `pqq_init`, `pqq_start_server`, `pqq_request` for embedding in Nginx, Apache, and custom stacks. |
+## Quick Start  unit tests.| `crates/velocity-server` | HTTP-native server facade with Axum-compatible handlers, static site glue, reverse proxy engine, observability hooks. |
+
+
+
+```pwsh- `spec/protocol-draft.md` – RFC-style draft describing handshake flow, packet| `crates/velocity-client` | Client SDK & CLI with sync/async APIs, fallback orchestration, cookie/JAR support, 0-RTT guardrails. |
+
+# Format, lint, and test the transport core
+
+cargo fmt  formats, fallback behaviour, and SSH transport mapping.| `crates/velocity-ssh-bridge` | Transport adapter mapping Velocity streams onto SSH semantics (vshd, vsh-proxy, agent forwarding). |
+
+cargo clippy -p velocity-core --all-targets -- -D warnings
+
+cargo test -p velocity-core- `benchmarks/plan.md` – reproducible benchmark plan covering UDP handshake| `native-bindings/` | C ABI exposing `pqq_init`, `pqq_start_server`, `pqq_request` for embedding in Nginx, Apache, and custom stacks. |
+
+```
 
   latency, throughput, and page-load experiments.| `spec/` | RFC-style Velocity/1 specification + byte-accurate transcript. |
 
-- `docs/ssh-migration.md` – design for adapting OpenSSH to Velocity transport| `docs/` | Operational guides, deployment patterns, security design, benchmarking playbooks, upgrade notes, troubleshooting. |
+All commands assume the Rust toolchain pinned in `rust-toolchain.toml`
 
-  without disrupting user workflows.| `benchmarks/` | Criterion harnesses, page-load simulations, AF_XDP optional fast-path harness. |
+(currently stable). Run them from the repository root.- `docs/ssh-migration.md` – design for adapting OpenSSH to Velocity transport| `docs/` | Operational guides, deployment patterns, security design, benchmarking playbooks, upgrade notes, troubleshooting. |
 
-| `formal/` | Tamarin/ProVerif models capturing mutual auth, forward secrecy, and downgrade resistance. |
 
-## Quickstart
 
-## Upgrade-at-a-glance
+## Documentation  without disrupting user workflows.| `benchmarks/` | Criterion harnesses, page-load simulations, AF_XDP optional fast-path harness. |
 
-```pwsh
+
+
+Comprehensive documentation lives under `docs/`:| `formal/` | Tamarin/ProVerif models capturing mutual auth, forward secrecy, and downgrade resistance. |
+
+
+
+- `docs/index.md` — repository overview, quick start, benchmarking notes, and## Quickstart
+
+  next steps.
+
+- `docs/quickstart.md` — step-by-step environment setup, build instructions, and## Upgrade-at-a-glance
+
+  troubleshooting tips.
+
+- `docs/ssh-migration.md` — design notes for transporting SSH over Velocity```pwsh
+
+  (to be expanded alongside implementation work).
 
 # Run unit tests* Hybrid certificates with Dilithium + ECDSA ready for production pilots.
 
-cargo test -p velocity-core* 0-RTT resumption with replay windows and policy-driven early-data gating.
+Refer to `spec/protocol-draft.md` for protocol details and
 
-* Encrypted Client Hello (ECH) support out of the box. DNS SVCB helpers documented in [`docs/security-design.md`](docs/security-design.md).
+`benchmarks/handshake-bench/` for the performance plan.cargo test -p velocity-core* 0-RTT resumption with replay windows and policy-driven early-data gating.
 
-# Apply formatting and lints* Telemetry opt-in streams delivering downgrade diagnostics, handshake percentiles, and PQ validation counters.
 
-cargo fmt* CLI-driven config system with simplified YAML (`serve.simple.yaml`) and granular overrides. See [`docs/user-handbook.md`](docs/user-handbook.md).
+
+## Contributing* Encrypted Client Hello (ECH) support out of the box. DNS SVCB helpers documented in [`docs/security-design.md`](docs/security-design.md).
+
+
+
+1. Branch from the active development branch.# Apply formatting and lints* Telemetry opt-in streams delivering downgrade diagnostics, handshake percentiles, and PQ validation counters.
+
+2. Update code and documentation together.
+
+3. Run `cargo fmt`, `cargo clippy`, and `cargo test` as shown above.cargo fmt* CLI-driven config system with simplified YAML (`serve.simple.yaml`) and granular overrides. See [`docs/user-handbook.md`](docs/user-handbook.md).
+
+4. Submit a pull request detailing changes and any follow-up work needed.
 
 cargo clippy -p velocity-core --all-targets
 
-```## Quickstart
+Read `CONTRIBUTING.md`, `GOVERNANCE.md`, and `SECURITY.md` for the full project
+
+policies.```## Quickstart
 
 
 
-`velocity-core` exposes [`run_udp_handshake_loop`], [`parse_packet`], and ALPN	```pwsh
+## License
+
+
+
+- Code: MIT License (see `LICENSE`).`velocity-core` exposes [`run_udp_handshake_loop`], [`parse_packet`], and ALPN	```pwsh
+
+- Documentation & specifications: CC-BY-4.0 (see `LICENSE`).
 
 helpers that mirror the TLS extension format. Downstream crates use these	# 1. Fetch dependencies and compile everything.
 
@@ -160,7 +222,6 @@ protocol semantics.
 ## Repository tour
 
 ```text
-├── adoption/                  # Partner enablement kits and pitch decks
 ├── bench/                     # Raw benchmark result storage (CSV + markdown summaries)
 ├── benchmarks/                # Harnesses for handshake microbenchmarks, AF_XDP PoC, browser automation
 ├── crates/

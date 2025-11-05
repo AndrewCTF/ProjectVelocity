@@ -12,7 +12,6 @@
 /// The code purposely favors clarity over optimisations so future crates can
 /// iterate on congestion control, header protection, and handshake logic
 /// without dragging in additional complexity at this stage.
-
 use std::io;
 use std::net::SocketAddr;
 
@@ -280,8 +279,7 @@ mod tests {
     #[test]
     fn parse_alpn_payload_success() {
         let payload = [
-            10, b'v', b'e', b'l', b'o', b'c', b'i', b't', b'y', b'/', b'1',
-            2, b'h', b'3',
+            10, b'v', b'e', b'l', b'o', b'c', b'i', b't', b'y', b'/', b'1', 2, b'h', b'3',
         ];
         let protocols = parse_alpn_payload(&payload).expect("alpn parsed");
         assert_eq!(protocols, vec!["velocity/1".to_string(), "h3".to_string()]);

@@ -88,12 +88,13 @@ impl AcmeCache {
 
 fn extract_not_after(pem: &str) -> Result<DateTime<Utc>, StorageError> {
     let mut cursor = Cursor::new(pem.as_bytes());
-    let der_certs = rustls_pemfile::certs(&mut cursor)
+    let der_certs: Vec<_> = rustls_pemfile::certs(&mut cursor)
+        .collect::<Result<Vec<_>, _>>()
         .map_err(|_| StorageError::X509("failed to parse PEM".into()))?;
     if der_certs.is_empty() {
         return Err(StorageError::X509("certificate chain empty".into()));
     }
-    let cert = X509Certificate::from_der(&der_certs[0])
+    let cert = X509Certificate::from_der(der_certs[0].as_ref())
         .map_err(|err| StorageError::X509(err.to_string()))?
         .1;
     let not_after = cert.validity().not_after.to_datetime();

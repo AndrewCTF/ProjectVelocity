@@ -357,7 +357,7 @@ async fn handle_tls_alpn_challenge(
 
 fn build_tls_alpn_state(domain: &str, digest: &[u8]) -> Result<TlsAlpnState, AcmeError> {
     use rcgen::{CertificateParams, CustomExtension, PKCS_ECDSA_P256_SHA256};
-    use rustls::{Certificate as RustlsCertificate, PrivateKey};
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
     let mut params = CertificateParams::new(vec![domain.to_owned()]);
     params.alg = &PKCS_ECDSA_P256_SHA256;
@@ -369,9 +369,11 @@ fn build_tls_alpn_state(domain: &str, digest: &[u8]) -> Result<TlsAlpnState, Acm
     let key_der = certificate.serialize_private_key_der();
 
     let mut config = ServerConfig::builder()
-        .with_safe_defaults()
         .with_no_client_auth()
-        .with_single_cert(vec![RustlsCertificate(cert_der)], PrivateKey(key_der))
+        .with_single_cert(
+            vec![CertificateDer::from(cert_der)],
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der)),
+        )
         .map_err(|err| AcmeError::Acme(err.to_string()))?;
     config.alpn_protocols = vec![b"acme-tls/1".to_vec()];
 

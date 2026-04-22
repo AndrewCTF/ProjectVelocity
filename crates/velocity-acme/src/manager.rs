@@ -266,7 +266,9 @@ async fn load_or_create_account(inner: &ManagerInner) -> Result<Account, AcmeErr
         let (account, creds) =
             Account::create(&new_account, inner.config.directory_url(), None).await?;
         let creds_data = serde_json::to_vec_pretty(&creds)?;
-        write_private_file(&credentials_path, &creds_data)?;
+        let credentials_path = credentials_path.clone();
+        tokio::task::spawn_blocking(move || write_private_file(&credentials_path, &creds_data))
+            .await??;
         Ok(account)
     }
 }

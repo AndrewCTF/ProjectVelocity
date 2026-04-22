@@ -16,5 +16,5 @@ tracing = "0.1"
 parking_lot = "0.12"
 x509-parser = "0.15"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
-rustls = { version = "0.21", features = ["dangerous_configuration"] }
+rustls = "0.21"
 tokio-rustls = "0.24"

@@ -17,7 +17,7 @@ use tokio::time::sleep;
 use tracing::{debug, warn};
 
 use crate::config::{AcmeChallengeType, AcmeConfig};
-use crate::storage::{AcmeCache, CachedCertificate, StorageError};
+use crate::storage::{write_private_file, AcmeCache, CachedCertificate, StorageError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AcmeError {
@@ -265,7 +265,8 @@ async fn load_or_create_account(inner: &ManagerInner) -> Result<Account, AcmeErr
         };
         let (account, creds) =
             Account::create(&new_account, inner.config.directory_url(), None).await?;
-        tokio::fs::write(&credentials_path, serde_json::to_vec_pretty(&creds)?).await?;
+        let creds_data = serde_json::to_vec_pretty(&creds)?;
+        write_private_file(&credentials_path, &creds_data)?;
         Ok(account)
     }
 }

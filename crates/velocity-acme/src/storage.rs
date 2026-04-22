@@ -1,5 +1,5 @@
-use std::fs;
-use std::io::Cursor;
+use std::fs::{self, OpenOptions};
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -43,6 +43,7 @@ impl AcmeCache {
         if !root.exists() {
             fs::create_dir_all(root)?;
         }
+        secure_cache_dir(root)?;
         Ok(Self {
             root: root.to_path_buf(),
             cert_path: root.join("certificate.pem"),
@@ -55,8 +56,8 @@ impl AcmeCache {
         certificate_pem: &str,
         private_key_pem: &str,
     ) -> Result<CachedCertificate, StorageError> {
-        fs::write(&self.cert_path, certificate_pem)?;
-        fs::write(&self.key_path, private_key_pem)?;
+        write_public_file(&self.cert_path, certificate_pem.as_bytes())?;
+        write_private_file(&self.key_path, private_key_pem.as_bytes())?;
         let expires_at = extract_not_after(certificate_pem)?;
         Ok(CachedCertificate {
             certificate_pem: certificate_pem.to_string(),
@@ -98,4 +99,45 @@ fn extract_not_after(pem: &str) -> Result<DateTime<Utc>, StorageError> {
     let not_after = cert.validity().not_after.to_datetime();
     DateTime::<Utc>::from_timestamp(not_after.unix_timestamp(), not_after.nanosecond())
         .ok_or_else(|| StorageError::X509("invalid certificate expiry".into()))
+}
+
+#[cfg(unix)]
+fn secure_cache_dir(path: &Path) -> Result<(), StorageError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn secure_cache_dir(_: &Path) -> Result<(), StorageError> {
+    Ok(())
+}
+
+pub(crate) fn write_private_file(path: &Path, content: &[u8]) -> Result<(), StorageError> {
+    write_file_with_mode(path, content, 0o600)
+}
+
+fn write_public_file(path: &Path, content: &[u8]) -> Result<(), StorageError> {
+    write_file_with_mode(path, content, 0o644)
+}
+
+#[cfg(unix)]
+fn write_file_with_mode(path: &Path, content: &[u8], mode: u32) -> Result<(), StorageError> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(mode)
+        .open(path)?;
+    file.write_all(content)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_file_with_mode(path: &Path, content: &[u8], _: u32) -> Result<(), StorageError> {
+    fs::write(path, content)?;
+    Ok(())
 }

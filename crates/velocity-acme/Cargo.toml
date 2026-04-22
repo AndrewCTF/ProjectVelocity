@@ -6,7 +6,6 @@ license = "MIT"
 
 [dependencies]
 instant-acme = "0.6"
-rustls-pemfile = "2.2"
 rcgen = "0.12"
 tokio = { version = "1.39", features = ["rt", "time", "fs", "sync", "macros"] }
 serde = { version = "1.0", features = ["derive"] }

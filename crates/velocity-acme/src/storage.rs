@@ -1,5 +1,5 @@
 use std::fs::{self, OpenOptions};
-use std::io::{Cursor, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -87,14 +87,9 @@ impl AcmeCache {
 }
 
 fn extract_not_after(pem: &str) -> Result<DateTime<Utc>, StorageError> {
-    let mut cursor = Cursor::new(pem.as_bytes());
-    let der_certs: Vec<_> = rustls_pemfile::certs(&mut cursor)
-        .collect::<Result<Vec<_>, _>>()
+    let (_, certificate_pem) = x509_parser::pem::parse_x509_pem(pem.as_bytes())
         .map_err(|_| StorageError::X509("failed to parse PEM".into()))?;
-    if der_certs.is_empty() {
-        return Err(StorageError::X509("certificate chain empty".into()));
-    }
-    let cert = X509Certificate::from_der(der_certs[0].as_ref())
+    let cert = X509Certificate::from_der(&certificate_pem.contents)
         .map_err(|err| StorageError::X509(err.to_string()))?
         .1;
     let not_after = cert.validity().not_after.to_datetime();
